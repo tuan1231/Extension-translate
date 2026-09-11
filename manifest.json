@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "Polyglot AI Translator",
+  "version": "1.0.0",
+  "description": "Dịch văn bản thông minh bám sát ngữ cảnh với AI. Hỗ trợ dịch bôi đen, icon nổi và lưu trữ từ vựng.",
+  "permissions": [
+    "activeTab",
+    "contextMenus",
+    "storage",
+    "scripting"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Mở Polyglot Translator"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["content/content.css"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

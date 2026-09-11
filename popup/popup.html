@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Polyglot AI</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header / Navigation -->
+    <header class="app-header">
+      <div class="app-logo">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
+        <span>Polyglot AI</span>
+      </div>
+      <nav class="app-nav">
+        <button class="nav-btn active" data-tab="translate">Dịch</button>
+        <button class="nav-btn" data-tab="vocab">Ôn tập</button>
+        <button class="nav-btn" data-tab="settings">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/></svg>
+        </button>
+      </nav>
+    </header>
+
+    <main class="app-main">
+      
+      <!-- TAB TRANSLATE -->
+      <section id="tab-translate" class="tab-content active">
+        <div class="lang-controls">
+          <div class="lang-box">
+            <label>Nguồn</label>
+            <div class="badge" id="source-lang-badge">Tự động (Auto)</div>
+          </div>
+          <div class="swap-icon">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
+          </div>
+          <div class="lang-box">
+            <label>Đích</label>
+            <select id="target-lang-select" class="modern-select"></select>
+          </div>
+        </div>
+
+        <div class="input-area">
+          <textarea id="source-text" placeholder="Nhập văn bản cần dịch..."></textarea>
+          <div class="input-footer">
+            <span id="char-count">0/5000</span>
+            <button id="btn-translate" class="btn primary">Dịch</button>
+          </div>
+        </div>
+
+        <div class="output-area">
+          <div class="output-header">
+            <span class="label">Bản dịch</span>
+            <div class="output-actions">
+              <button id="btn-speak-result" class="icon-btn" title="Nghe phát âm">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+              </button>
+              <button id="btn-copy-result" class="icon-btn" title="Sao chép">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z"/></svg>
+              </button>
+              <button id="btn-save-vocab" class="icon-btn" title="Lưu vào Sổ tay">
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M17 3H7c-1.1 0-1.99.9-1.99 2L5 21l7-3 7 3V5c0-1.1-.9-2-2-2zm0 15l-5-2.18L7 18V5h10v13z"/></svg>
+              </button>
+            </div>
+          </div>
+          <div id="target-text" class="result-box">Bản dịch sẽ hiển thị ở đây...</div>
+        </div>
+      </section>
+
+      <!-- TAB VOCAB / REMINDER -->
+      <section id="tab-vocab" class="tab-content">
+        <div class="vocab-header">
+          <h2>Sổ tay ôn tập (Flashcards)</h2>
+          <button id="btn-clear-vocab" class="btn small danger">Xóa tất cả</button>
+        </div>
+        <div id="vocab-list" class="vocab-list">
+          <!-- Flashcards sẽ được render ở đây -->
+        </div>
+      </section>
+
+      <!-- TAB SETTINGS -->
+      <section id="tab-settings" class="tab-content">
+        <h2>Cài đặt hệ thống</h2>
+        
+        <div class="setting-group">
+          <label>Engine Dịch thuật</label>
+          <div class="engine-selector">
+            <label class="radio-label">
+              <input type="radio" name="engine" value="google" checked>
+              <div class="radio-card">
+                <strong>Google Translate</strong>
+                <span>Miễn phí, tốc độ cao.</span>
+              </div>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="engine" value="gemini">
+              <div class="radio-card">
+                <strong>AI Gemini Flash (Mới nhất)</strong>
+                <span>Chuẩn ngữ cảnh (Cần API Key).</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div class="setting-group" id="gemini-key-group">
+          <label>Gemini API Key</label>
+          <input type="password" id="gemini-api-key" placeholder="AQ... hoặc AIzaSy..." class="modern-input">
+          <p class="help-text">Lấy key miễn phí tại <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>.</p>
+        </div>
+
+        <div class="setting-group">
+          <label>Ngôn ngữ đích mặc định</label>
+          <select id="default-target-lang" class="modern-select"></select>
+        </div>
+
+        <div class="setting-group checkbox-group">
+          <label class="toggle">
+            <input type="checkbox" id="show-floating-icon" checked>
+            <span class="slider"></span>
+          </label>
+          <div class="toggle-info">
+            <strong>Hiện Icon nổi khi bôi đen</strong>
+            <span>Hiển thị icon dịch nhanh khi bạn bôi đen văn bản.</span>
+          </div>
+        </div>
+
+        <div class="settings-footer">
+          <button id="btn-save-settings" class="btn primary">Lưu Cài đặt</button>
+          <span id="settings-status"></span>
+        </div>
+      </section>
+
+    </main>
+  </div>
+  
+  <script src="../shared/languages.js"></script>
+  <script src="../shared/storage.js"></script>
+  <script src="../shared/translator.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

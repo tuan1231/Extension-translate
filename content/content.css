@@ -1,0 +1,258 @@
+/* Reset & Base */
+:host {
+  all: initial;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #333;
+}
+
+/* Nút Icon nổi (Floating Bubble) */
+.polyglot-bubble {
+  position: absolute;
+  z-index: 2147483646;
+  width: 32px;
+  height: 32px;
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
+  border-radius: 50%;
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 0.2s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  animation: fadeInBubble 0.2s ease-out;
+}
+
+.polyglot-bubble:hover {
+  transform: scale(1.1);
+  box-shadow: 0 6px 16px rgba(79, 70, 229, 0.6);
+}
+
+.polyglot-bubble svg {
+  width: 18px;
+  height: 18px;
+  fill: #fff;
+}
+
+@keyframes fadeInBubble {
+  from { opacity: 0; transform: scale(0.5); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* Hộp thoại Dịch (Translation Card) */
+.polyglot-dialog {
+  position: absolute;
+  z-index: 2147483647;
+  width: 340px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 16px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1), 0 1px 3px rgba(0,0,0,0.05);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  color: #1e293b;
+}
+
+/* Dark mode cho Hộp thoại */
+@media (prefers-color-scheme: dark) {
+  .polyglot-dialog {
+    background: rgba(30, 41, 59, 0.85);
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #f8fafc;
+  }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Header */
+.polyglot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  cursor: grab;
+  user-select: none;
+}
+
+.polyglot-header:active {
+  cursor: grabbing;
+}
+
+.polyglot-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: #4F46E5;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-title { color: #818cf8; }
+}
+
+.polyglot-close {
+  background: none;
+  border: none;
+  color: #94a3b8;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+
+.polyglot-close:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+/* Content Area */
+.polyglot-body {
+  padding: 16px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.polyglot-section {
+  margin-bottom: 12px;
+}
+
+.polyglot-section:last-child {
+  margin-bottom: 0;
+}
+
+.polyglot-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.polyglot-text-box {
+  background: rgba(241, 245, 249, 0.6);
+  padding: 10px 12px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1.6;
+  word-wrap: break-word;
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-text-box {
+    background: rgba(15, 23, 42, 0.6);
+  }
+}
+
+.polyglot-source-text {
+  color: #475569;
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-source-text { color: #cbd5e1; }
+}
+
+.polyglot-target-text {
+  font-weight: 500;
+  color: #0f172a;
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-target-text { color: #f8fafc; }
+}
+
+/* Toolbar */
+.polyglot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid rgba(148, 163, 184, 0.2);
+  background: rgba(248, 250, 252, 0.5);
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-toolbar { background: rgba(30, 41, 59, 0.5); }
+}
+
+.polyglot-btn {
+  background: none;
+  border: 1px solid rgba(148, 163, 184, 0.4);
+  padding: 6px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #475569;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-btn { color: #cbd5e1; border-color: rgba(148, 163, 184, 0.3); }
+}
+
+.polyglot-btn:hover {
+  background: rgba(79, 70, 229, 0.1);
+  color: #4F46E5;
+  border-color: #4F46E5;
+}
+
+@media (prefers-color-scheme: dark) {
+  .polyglot-btn:hover {
+    background: rgba(129, 140, 248, 0.15);
+    color: #818cf8;
+    border-color: #818cf8;
+  }
+}
+
+.polyglot-btn svg {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+}
+
+.polyglot-btn.primary {
+  background: linear-gradient(135deg, #4F46E5, #7C3AED);
+  color: white;
+  border: none;
+}
+
+.polyglot-btn.primary:hover {
+  box-shadow: 0 2px 8px rgba(79, 70, 229, 0.4);
+  transform: translateY(-1px);
+}
+
+/* Loading Spinner */
+.polyglot-loader {
+  border: 3px solid rgba(79, 70, 229, 0.2);
+  border-top: 3px solid #4F46E5;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  animation: spin 1s linear infinite;
+  margin: 20px auto;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Font Inter import via Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
