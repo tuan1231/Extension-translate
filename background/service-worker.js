@@ -74,4 +74,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     sendResponse({ languages: typeof LANGUAGES !== 'undefined' ? LANGUAGES : [] });
     return true;
   }
+
+  if (request.action === "FETCH_TTS") {
+    (async () => {
+      try {
+        const response = await fetch(request.url);
+        if (!response.ok) throw new Error('Network response was not ok');
+        const arrayBuffer = await response.arrayBuffer();
+        
+        let binary = '';
+        const bytes = new Uint8Array(arrayBuffer);
+        const len = bytes.byteLength;
+        for (let i = 0; i < len; i++) {
+          binary += String.fromCharCode(bytes[i]);
+        }
+        const base64 = btoa(binary);
+        const dataUrl = `data:audio/mpeg;base64,${base64}`;
+        
+        sendResponse({ success: true, dataUrl });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
 });

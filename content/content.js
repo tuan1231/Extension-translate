@@ -350,11 +350,10 @@ function playHighQualityTTS(text, lang) {
   if (window.currentPolyglotAudio) window.currentPolyglotAudio.pause();
   if (window.speechSynthesis) window.speechSynthesis.cancel();
 
-  // Tách văn bản thành các câu nhỏ vì Google TTS API có giới hạn độ dài
   const chunks = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
   let playIndex = 0;
 
-  const playNext = () => {
+  const playNext = async () => {
     if (playIndex >= chunks.length) return;
     let chunk = chunks[playIndex].trim();
     if (!chunk) {
@@ -364,26 +363,36 @@ function playHighQualityTTS(text, lang) {
 
     if (chunk.length > 200) chunk = chunk.substring(0, 200);
 
-    const url = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=${lang}&q=${encodeURIComponent(chunk)}`;
-    const audio = new Audio(url);
-    window.currentPolyglotAudio = audio;
+    const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${lang}&q=${encodeURIComponent(chunk)}`;
+    
+    try {
+      const response = await new Promise(res => chrome.runtime.sendMessage({
+        action: "FETCH_TTS",
+        url: url
+      }, res));
+      
+      if (!response || !response.success) throw new Error('Fetch TTS failed');
+      
+      const audio = new Audio(response.dataUrl);
+      window.currentPolyglotAudio = audio;
 
-    audio.onended = () => {
-      playIndex++;
-      playNext();
-    };
+      audio.onended = () => {
+        playIndex++;
+        playNext();
+      };
 
-    audio.onerror = () => {
+      audio.onerror = () => {
+        fallbackTTS(chunk, lang);
+        playIndex++;
+        setTimeout(playNext, 2000);
+      };
+
+      await audio.play();
+    } catch (e) {
       fallbackTTS(chunk, lang);
       playIndex++;
       setTimeout(playNext, 2000);
-    };
-
-    audio.play().catch(() => {
-      fallbackTTS(chunk, lang);
-      playIndex++;
-      setTimeout(playNext, 2000);
-    });
+    }
   };
 
   playNext();
@@ -392,7 +401,24 @@ function playHighQualityTTS(text, lang) {
 function fallbackTTS(text, lang) {
   if (!window.speechSynthesis) return;
   const utterance = new SpeechSynthesisUtterance(text);
+
+  const voices = window.speechSynthesis.getVoices();
+  if (voices.length > 0) {
+    const voice = voices.find(v => v.lang.toLowerCase().startsWith(lang.toLowerCase()));
+    if (voice) {
+      utterance.voice = voice;
+    }
+  }
+
   utterance.lang = lang;
   utterance.rate = 0.95;
   window.speechSynthesis.speak(utterance);
+}
+
+// Pre-load voices for fallback TTS
+if (window.speechSynthesis) {
+  window.speechSynthesis.getVoices();
+  window.speechSynthesis.onvoiceschanged = () => {
+    window.speechSynthesis.getVoices();
+  };
 }
