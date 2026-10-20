@@ -19,6 +19,9 @@
     cues: [],
     translations: [],
     targetLang: 'vi',
+    userTargetLang: 'vi',   // ngôn ngữ dịch người dùng muốn (cài đặt)
+    videoLang: '',          // ngôn ngữ nói của video hiện tại
+    translationsLang: null, // ngôn ngữ của mảng state.translations hiện tại
     languages: [],
     prefs: { ...DEFAULT_PREFS },
     tab: 'transcript',
@@ -185,8 +188,13 @@
     'just about into over out up down off all any some what which who whom whose when where why how ' +
     "it's i'm you're we're they're don't can't won't isn't aren't that's there's let's").split(/\s+/));
 
-  function isPracticable(cue) {
-    return cue && tokenize(cue.text).length >= 2;
+  function isPracticable(cue, index) {
+    if (!cue) return false;
+    const practice = getPracticeSentence(index != null ? index : (state.cues ? state.cues.indexOf(cue) : -1));
+    if (practice && practice.text) {
+      return tokenize(practice.text).length >= 2;
+    }
+    return tokenize(cue.text).length >= 2;
   }
 
   // ================= Caption parsing =================
@@ -281,16 +289,107 @@
       || null;
   }
 
-  function pickDefaultTrack(tracks) {
-    if (!tracks || !tracks.length) return null;
-    // Nếu cài đặt dịch sang tiếng Anh, ưu tiên phụ đề tiếng Việt
-    if (state.targetLang === 'en') {
-      return findVietnameseTrack(tracks) || findEnglishTrack(tracks) || tracks[0];
+  // ---------- Ngôn ngữ tổng quát (mọi ngôn ngữ, không chỉ Việt/Anh) ----------
+  const langBase = (code) => (code || '').toLowerCase().split(/[-_]/)[0];
+
+  // Track do YouTube dịch máy (variant=gemini) — không phải phụ đề gốc của video
+  function isAutoTranslatedTrack(t) {
+    if (!t) return false;
+    return t.variant === 'gemini' || /[?&]variant=gemini/.test(t.baseUrl || '');
+  }
+
+  function findTrackByLang(tracks, code) {
+    if (!tracks || !tracks.length || !code) return null;
+    const want = langBase(code);
+    const m = tracks.filter(t => langBase(t.languageCode) === want);
+    if (!m.length) return null;
+    return m.find(t => t.kind !== 'asr' && !isAutoTranslatedTrack(t))
+      || m.find(t => !isAutoTranslatedTrack(t))
+      || m[0];
+  }
+
+  const VI_CHARS = /[ăâđêôơưạảấầẩẫậắằẳẵặẹẻẽếềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i;
+
+  // Xác định ngôn ngữ nói của video
+  function detectVideoLang(info) {
+    if (!info) return '';
+    if (info.originalLang) return langBase(info.originalLang);
+    if (info.audioLang) return langBase(info.audioLang);
+    const tracks = (info.tracks || []).filter(t => !isAutoTranslatedTrack(t));
+    const asr = tracks.find(t => t.kind === 'asr');
+    if (asr) return langBase(asr.languageCode);
+
+    if (info.title && VI_CHARS.test(info.title)) {
+      return 'vi';
     }
-    return findEnglishTrack(tracks)
-      || findVietnameseTrack(tracks)
-      || tracks.find(t => t.kind !== 'asr')
-      || tracks[0];
+    const langs = [...new Set(tracks.map(t => langBase(t.languageCode)))];
+    if (langs.length === 1) return langs[0];
+    return '';
+  }
+
+  // Quy tắc lựa chọn phụ đề mặc định:
+  // 1) Nếu video tiếng Việt -> ưu tiên tuyệt đối phụ đề tiếng Việt (thủ công trước, rồi ASR)
+  // 2) Nếu không phải tiếng Việt (tiếng Anh, Nhật, Hàn, Trung, Pháp, Đức...) -> lấy tiếng Anh hoặc tiếng nước ngoài mà video đó có
+  function pickDefaultTrack(tracks, info) {
+    if (!tracks || !tracks.length) return null;
+    const pool = tracks.filter(t => !isAutoTranslatedTrack(t));
+    const list = pool.length ? pool : tracks;
+
+    const vLang = (typeof info === 'string' ? info : detectVideoLang(info)) || '';
+
+    // 1. NẾU VIDEO TIẾNG VIỆT: Ưu tiên phụ đề tiếng Việt
+    if (vLang === 'vi' || (info?.title && VI_CHARS.test(info.title)) || list.some(t => isVietnameseTrack(t) && t.kind === 'asr')) {
+      const viTrack = findVietnameseTrack(list);
+      if (viTrack) return viTrack;
+    }
+
+    // 2. NẾU VIDEO KHÔNG PHẢI TIẾNG VIỆT:
+    // Ưu tiên track đúng tiếng nước ngoài của video (ví dụ tiếng Nhật nếu video Nhật, Hàn nếu video Hàn...)
+    if (vLang && vLang !== 'vi') {
+      const exactLangTrack = findTrackByLang(list, vLang);
+      if (exactLangTrack) return exactLangTrack;
+    }
+
+    // Ưu tiên tiếng Anh
+    const enTrack = findTrackByLang(list, 'en');
+    if (enTrack) return enTrack;
+
+    // Tìm track tiếng nước ngoài bất kỳ của video (không phải tiếng Việt)
+    const foreignTrack = list.find(t => !isVietnameseTrack(t) && t.kind !== 'asr')
+      || list.find(t => !isVietnameseTrack(t));
+    if (foreignTrack) return foreignTrack;
+
+    // Cuối cùng: track đầu tiên có sẵn
+    return list.find(t => t.kind !== 'asr') || list[0];
+  }
+
+  // Ngôn ngữ dịch: theo cài đặt người dùng, nhưng không bao giờ trùng ngôn ngữ phụ đề
+  function resolveTargetLang(srcCode) {
+    const src = langBase(srcCode);
+    const pref = state.userTargetLang || 'vi';
+    if (!src || langBase(pref) !== src) return pref;
+    return src === 'vi' ? 'en' : 'vi';
+  }
+
+  // Transcript:
+  // - Nếu phụ đề tiếng Việt: GIỮ NGUYÊN tiếng Việt (targetLang = 'vi', không dịch)
+  // - Nếu phụ đề nước ngoài (Anh, Nhật, Hàn...): dịch sang Tiếng Việt (targetLang = userTargetLang || 'vi')
+  // Dictation/Điền từ: video không phải tiếng Anh thì bài làm là bản dịch tiếng Anh.
+  function applyTargetLang() {
+    const isVi = isVietnameseTrack(state.track);
+    let tl;
+    if (state.tab !== 'transcript') {
+      tl = isEnglishTrack(state.track) ? (state.userTargetLang || 'vi') : 'en';
+    } else {
+      if (isVi) {
+        tl = 'vi'; // Giữ nguyên tiếng Việt, không dịch sang tiếng Anh
+      } else {
+        tl = state.userTargetLang || 'vi';
+      }
+    }
+    state.targetLang = tl;
+    if (state.ui.langSel) state.ui.langSel.value = tl;
+    return tl;
   }
 
   // ================= Player helpers =================
@@ -334,34 +433,23 @@
     seekTo(cue.start - 0.08, true);
   }
 
+  // Đảo chiều: phụ đề ↔ ngôn ngữ dịch (mọi cặp ngôn ngữ)
   function swapLanguageDirection() {
-    if (state.targetLang === 'vi') {
-      const viTrack = findVietnameseTrack(state.tracks);
-      if (viTrack) {
-        state.targetLang = 'en';
-        state.track = viTrack;
-        if (state.ui.trackSel) state.ui.trackSel.value = String(state.tracks.indexOf(viTrack));
-      } else {
-        if (isVietnameseTrack(state.track)) {
-          state.targetLang = 'en';
-        } else {
-          state.targetLang = 'vi';
-        }
-      }
-    } else {
-      const enTrack = findEnglishTrack(state.tracks);
-      if (enTrack) {
-        state.targetLang = 'vi';
-        state.track = enTrack;
-        if (state.ui.trackSel) state.ui.trackSel.value = String(state.tracks.indexOf(enTrack));
-      } else {
-        state.targetLang = 'vi';
-      }
+    const src = langBase(state.track?.languageCode);
+    const tgt = langBase(state.targetLang);
+    const newTrack = findTrackByLang(state.tracks, tgt);
+    if (!newTrack) {
+      setStatus(`Video không có phụ đề ${state.ui.langSel?.selectedOptions?.[0]?.textContent || tgt} để đảo chiều.`);
+      setTimeout(() => setStatus(''), 2500);
+      return;
     }
-    if (state.ui.langSel) state.ui.langSel.value = state.targetLang;
+    state.track = newTrack;
+    if (state.ui.trackSel) state.ui.trackSel.value = String(state.tracks.indexOf(newTrack));
+    if (src) state.userTargetLang = src;
+    applyTargetLang();
     try {
       chrome.storage.local.get(['polyglot_settings'], r => {
-        const s = { ...(r && r.polyglot_settings), targetLang: state.targetLang };
+        const s = { ...(r && r.polyglot_settings), targetLang: state.userTargetLang };
         chrome.storage.local.set({ polyglot_settings: s });
       });
     } catch (e) { }
@@ -535,25 +623,24 @@
     Object.entries(state.ui.views).forEach(([k, v]) => v.classList.toggle('pgyt-hidden', k !== tab));
 
     const v = getVideo();
+
+    // Đổi tab -> cập nhật ngôn ngữ dịch phù hợp và dịch lại nếu cần
+    const beforeLang = state.targetLang;
+    applyTargetLang();
+    if (state.targetLang !== beforeLang && state.cues.length) translateAll();
+
     if (tab === 'transcript') {
       state.stopAt = null;
       if (v && state.prevRate != null) { v.playbackRate = state.prevRate; state.prevRate = null; }
       if (!silent) scrollToActive(true);
     } else {
-      // Chế độ luyện nghe: nếu đang dịch sang tiếng Việt mà track chưa phải tiếng Anh thì ưu tiên tiếng Anh
-      if (state.targetLang === 'vi') {
-        const enTrack = findEnglishTrack(state.tracks);
-        if (enTrack && state.track !== enTrack) {
-          state.track = enTrack;
-          if (state.ui.trackSel) state.ui.trackSel.value = String(state.tracks.indexOf(enTrack));
-          loadTrack(++state.loadToken);
-        }
-      }
-
       if (v && state.prevRate == null) state.prevRate = v.playbackRate;
-      if (!silent && prev === 'transcript' && state.cues.length) {
-        let idx = findCueNear(v ? v.currentTime : 0);
-        while (idx < state.cues.length - 1 && !isPracticable(state.cues[idx])) idx++;
+      if (prev !== tab && state.cues.length) {
+        let idx = (state.practice && state.practice.index >= 0) ? state.practice.index : 0;
+        if (prev === 'transcript') {
+          idx = findCueNear(v ? v.currentTime : 0);
+          while (idx < state.cues.length - 1 && !isPracticable(state.cues[idx], idx)) idx++;
+        }
         resetPracticeCard(idx);
         if (v) v.pause();
       }
@@ -566,6 +653,31 @@
   function renderTranscript() {
     const ui = state.ui;
     ui.list.replaceChildren();
+
+    if (!state.cues.length) {
+      const emptyBox = h('div', { class: 'pgyt-empty', style: 'padding: 30px 16px; text-align: center; color: var(--pg-text-sub, #888); font-size: 13px;' },
+        h('div', { style: 'font-size: 26px; margin-bottom: 8px;' }, state.isListeningAudio ? '🎙️' : '📝'),
+        h('div', { style: 'font-weight: 600; margin-bottom: 4px; color: var(--pg-text, #eee); font-size: 14px;' },
+          state.isListeningAudio ? 'Đang ở chế độ Live AI (tự nghe âm thanh)' : 'Chưa có dữ liệu phụ đề'
+        ),
+        h('div', { style: 'font-size: 12px; line-height: 1.5; margin-bottom: 14px; color: var(--pg-text-sub, #999);' },
+          state.isListeningAudio
+            ? 'Phát video để nhận diện tiếp hoặc nhấn nút bên dưới để khôi phục toàn bộ phụ đề CC có sẵn của video.'
+            : 'Đang tải phụ đề hoặc video chưa có phụ đề. Bạn có thể nhấn nút Tải lại bên dưới.'
+        ),
+        h('button', {
+          class: 'pgyt-btn pgyt-btn-primary pgyt-btn-sm',
+          onclick: () => {
+            if (state.isListeningAudio) stopLiveAudio();
+            if (state.track) loadTrack(++state.loadToken);
+            else if (state.videoId) loadVideo(state.videoId);
+          }
+        }, '🔄 Tải lại toàn bộ phụ đề CC của video')
+      );
+      ui.list.append(emptyBox);
+      return;
+    }
+
     ui.rows = state.cues.map((cue, i) => {
       const tr = h('div', { class: 'pgyt-row-tr' });
       const row = h('div', { class: 'pgyt-row', 'data-idx': String(i), onclick: () => seekTo(cue.start, true) },
@@ -583,6 +695,13 @@
     const row = state.ui.rows && state.ui.rows[i];
     if (!row) return;
     const t = state.translations[i];
+    if (t === '') {
+      row._tr.textContent = '';
+      row._tr.classList.remove('pgyt-pending');
+      row._tr.style.display = 'none';
+      return;
+    }
+    row._tr.style.display = '';
     row._tr.textContent = t == null ? '…' : t;
     row._tr.classList.toggle('pgyt-pending', t == null);
   }
@@ -632,6 +751,56 @@
   }
 
   // ================= Practice (Dictation & Fill) =================
+  function getPracticeSentence(index) {
+    const cue = state.cues && state.cues[index];
+    if (!cue) return { text: '', meaning: '', isOriginalEng: false };
+
+    const isEng = isEnglishTrack(state.track);
+    if (isEng) {
+      return {
+        text: cue.text,
+        meaning: (state.translations && state.translations[index]) || '',
+        isOriginalEng: true
+      };
+    } else {
+      // Khi video KHÔNG phải tiếng Anh (ví dụ tiếng Việt):
+      // Bài làm LUÔN LUÔN là câu tiếng Anh (bản dịch)
+      // Ý nghĩa/Gợi ý đối chiếu là câu gốc của video
+      const enText = (state.translations && state.translations[index]) ? state.translations[index].trim() : '';
+      return {
+        text: enText,
+        meaning: cue.text,
+        isOriginalEng: false
+      };
+    }
+  }
+
+  async function ensureCueTranslation(index) {
+    if (state.translations && state.translations[index]) {
+      return state.translations[index];
+    }
+    const cue = state.cues && state.cues[index];
+    if (!cue) return '';
+
+    try {
+      const res = await sendBg({
+        action: 'DO_TRANSLATION',
+        text: cue.text,
+        sourceLang: state.track?.languageCode || 'auto',
+        targetLang: 'en'
+      });
+      if (res && res.success && res.data?.translatedText) {
+        const text = res.data.translatedText.trim();
+        if (state.translations) {
+          state.translations[index] = text;
+        }
+        updateRowTranslation(index);
+        return text;
+      }
+    } catch (e) { }
+    return '';
+  }
+
   function resetPracticeCard(idx) {
     const pr = state.practice;
     pr.index = Math.max(0, Math.min(idx, state.cues.length - 1));
@@ -640,6 +809,7 @@
     pr.lastAcc = null;
     pr.hints = 0;
     pr.blanks = null;
+    pr.blanksSource = null;
     pr.draft = '';
     pr.dictResult = null;
   }
@@ -657,7 +827,7 @@
     if (!state.cues.length) return;
     commitStats();
     let i = state.practice.index + dir;
-    while (i > 0 && i < state.cues.length - 1 && !isPracticable(state.cues[i])) i += dir;
+    while (i > 0 && i < state.cues.length - 1 && !isPracticable(state.cues[i], i)) i += dir;
     i = Math.max(0, Math.min(i, state.cues.length - 1));
     resetPracticeCard(i);
     renderPractice();
@@ -681,6 +851,7 @@
 
     const pr = state.practice;
     const cue = state.cues[pr.index];
+    const practice = getPracticeSentence(pr.index);
     const stats = pr.stats[mode];
     const avg = stats.count ? Math.round(stats.sum / stats.count) : null;
 
@@ -713,11 +884,10 @@
       }
     }
 
-    const isViTrack = isVietnameseTrack(state.track);
     const top = h('div', { class: 'pgyt-p-top' },
       h('div', { class: 'pgyt-p-count' },
         h('span', { text: 'Câu ' }), h('b', { text: String(pr.index + 1) }), h('span', { text: ` / ${state.cues.length}` }),
-        h('span', { class: 'pgyt-badge-en', text: isViTrack ? 'TIẾNG VIỆT' : 'ENGLISH' }),
+        h('span', { class: 'pgyt-badge-en', text: 'ENGLISH' }),
         h('span', { class: 'pgyt-p-time', text: `${fmtTime(cue.start)} – ${fmtTime(cue.end)}` })
       ),
       h('div', { class: 'pgyt-p-stats' },
@@ -729,9 +899,19 @@
     const progress = h('div', { class: 'pgyt-progress pgyt-p-progress' },
       h('div', { class: 'pgyt-progress-fill', style: `width:${((pr.index + 1) / state.cues.length) * 100}%` }));
 
+    // Nút nghe phát âm tiếng Anh (khi video gốc là tiếng Việt hoặc tiếng khác)
+    const ttsBtn = (!practice.isOriginalEng && practice.text) ? h('button', {
+      class: 'pgyt-round',
+      title: 'Nghe phát âm Tiếng Anh của câu bài làm',
+      onclick: () => {
+        sendBg({ action: 'TTS_SPEAK', text: practice.text, lang: 'en' });
+      }
+    }, icon('headphones', 20)) : null;
+
     const controls = h('div', { class: 'pgyt-p-controls' },
       h('button', { class: 'pgyt-round', title: 'Câu trước', onclick: () => practiceGo(-1) }, icon('prev')),
-      h('button', { class: 'pgyt-round pgyt-round-main', title: 'Nghe lại câu (Ctrl+Space)', onclick: replay }, icon('replay', 26)),
+      h('button', { class: 'pgyt-round pgyt-round-main', title: 'Nghe lại video (Ctrl+Space)', onclick: replay }, icon('replay', 26)),
+      ...(ttsBtn ? [ttsBtn] : []),
       h('button', { class: 'pgyt-round', title: 'Câu tiếp (Enter sau khi kiểm tra)', onclick: () => practiceGo(1) }, icon('next')),
       speedSel
     );
@@ -746,7 +926,7 @@
     view.append(h('div', { class: 'pgyt-keys' },
       h('kbd', { text: 'Enter' }), ' kiểm tra / câu tiếp',
       h('span', { class: 'pgyt-dot', text: '·' }),
-      h('kbd', { text: 'Ctrl' }), '+', h('kbd', { text: 'Space' }), ' nghe lại'
+      h('kbd', { text: 'Ctrl' }), '+', h('kbd', { text: 'Space' }), ' nghe lại video'
     ));
 
     if (pr.checked) {
@@ -772,10 +952,26 @@
   // ---------- Dictation ----------
   function renderDictationBody(view, cue) {
     const pr = state.practice;
+    const practice = getPracticeSentence(pr.index);
+
+    if (!practice.text) {
+      view.append(
+        h('div', { class: 'pgyt-empty', text: 'Đang tải bản dịch tiếng Anh cho câu này…' })
+      );
+      ensureCueTranslation(pr.index).then(tr => {
+        if (tr && state.tab === 'dictation') renderPractice();
+      });
+      return;
+    }
+
+    const placeholder = practice.isOriginalEng
+      ? 'Nghe và gõ lại câu tiếng Anh bạn nghe được…'
+      : 'Gõ lại câu tiếng Anh tương ứng với nội dung video…';
+
     const ta = h('textarea', {
       class: 'pgyt-input',
       rows: '3',
-      placeholder: 'Nghe và gõ lại câu tiếng Anh bạn nghe được…',
+      placeholder,
       spellcheck: 'false',
       autocomplete: 'off',
       autocorrect: 'off',
@@ -791,6 +987,11 @@
     state.ui.dictInput = ta;
 
     const actions = h('div', { class: 'pgyt-p-actions' },
+      (pr.checked || pr.revealed) ? h('button', {
+        class: 'pgyt-btn pgyt-btn-ghost',
+        title: 'Xoá và làm lại câu này',
+        onclick: () => { resetPracticeCard(pr.index); renderPractice(); }
+      }, icon('replay', 16), 'Làm lại') : null,
       h('button', { class: 'pgyt-btn pgyt-btn-ghost', onclick: dictationHint }, icon('hint', 16), 'Gợi ý 1 từ'),
       h('button', { class: 'pgyt-btn pgyt-btn-ghost', onclick: () => { pr.revealed = true; checkDictation(); } }, icon('eye', 16), 'Xem đáp án'),
       h('button', { class: 'pgyt-btn pgyt-btn-primary', onclick: checkDictation }, icon('check', 16), 'Kiểm tra')
@@ -802,7 +1003,9 @@
   function dictationHint() {
     const pr = state.practice;
     const ta = state.ui.dictInput;
-    const exp = tokenize(state.cues[pr.index].text);
+    if (!ta) return;
+    const practice = getPracticeSentence(pr.index);
+    const exp = tokenize(practice.text);
     const got = tokenize(ta.value);
     let k = 0;
     while (k < exp.length && k < got.length && exp[k].n === got[k].n) k++;
@@ -815,7 +1018,8 @@
 
   function checkDictation() {
     const pr = state.practice;
-    const exp = tokenize(state.cues[pr.index].text);
+    const practice = getPracticeSentence(pr.index);
+    const exp = tokenize(practice.text);
     const got = tokenize((state.ui.dictInput && state.ui.dictInput.value) || '');
     const { ma, mb } = lcsMatch(exp.map(x => x.n), got.map(x => x.n));
     let acc = exp.length ? Math.round((ma.size / exp.length) * 100) : 100;
@@ -831,7 +1035,6 @@
     const r = pr.dictResult;
     const box = state.ui.result;
     if (!r || !box) return;
-    box.replaceChildren();
 
     const perfect = r.ma.size === r.exp.length;
     const reveal = pr.revealed || perfect;
@@ -844,15 +1047,20 @@
     );
 
     const wrong = r.got.filter((_, j) => !r.mb.has(j)).map(w => w.raw);
-    box.append(
+    const children = [
       h('div', { class: 'pgyt-score-row' },
         h('span', { class: `pgyt-score ${scoreClass(r.acc)}`, text: `${r.acc}%` }),
         h('span', { class: 'pgyt-score-msg', text: perfect ? 'Chính xác! Nhấn Enter để sang câu tiếp.' : (reveal ? 'Đáp án đầy đủ ở dưới.' : 'Các từ còn thiếu được che bằng •••. Nghe lại và sửa nhé!') })
       ),
-      sentence,
-      wrong.length ? h('div', { class: 'pgyt-wrong' }, h('span', { text: 'Sai / thừa: ' }), wrong.map(w => h('s', { text: w }))) : null,
-      reveal ? translationBlock() : null
-    );
+      sentence
+    ];
+    if (wrong.length) {
+      children.push(h('div', { class: 'pgyt-wrong' }, h('span', { text: 'Sai / thừa: ' }), wrong.map(w => h('s', { text: w }))));
+    }
+    if (reveal) {
+      children.push(translationBlock());
+    }
+    box.replaceChildren(...children);
   }
 
   // ---------- Fill in the blank ----------
@@ -862,8 +1070,9 @@
     return () => (s = (s * 16807) % 2147483647) / 2147483647;
   }
 
-  function buildBlanks(cue, idx) {
-    const parts = cue.text.split(/\s+/).filter(Boolean).map(raw => {
+  function buildBlanks(text, idx) {
+    if (!text) return [];
+    const parts = text.split(/\s+/).filter(Boolean).map(raw => {
       const m = raw.match(/^([^\p{L}\p{N}']*)(.*?)([^\p{L}\p{N}']*)$/u);
       return { raw, pre: m ? m[1] : '', word: m ? m[2] : raw, post: m ? m[3] : '', n: normWord(raw) };
     });
@@ -871,14 +1080,29 @@
       .filter(({ p }) => p.n.length >= 3 && !STOPWORDS.has(p.n) && /\p{L}/u.test(p.n));
     const pool = candidates.length ? candidates : parts.map((p, i) => ({ p, i })).filter(({ p }) => p.n).sort((a, b) => b.p.n.length - a.p.n.length).slice(0, 1);
     const count = Math.max(1, Math.min(5, Math.round(pool.length * 0.4)));
-    const rnd = seeded(idx * 7919 + cue.text.length);
+    const rnd = seeded(idx * 7919 + text.length);
     const chosen = new Set(pool.map(x => ({ x, r: rnd() })).sort((a, b) => a.r - b.r).slice(0, count).map(o => o.x.i));
     return parts.map((p, i) => ({ ...p, blank: chosen.has(i) }));
   }
 
   function renderFillBody(view, cue) {
     const pr = state.practice;
-    if (!pr.blanks) pr.blanks = buildBlanks(cue, pr.index);
+    const practice = getPracticeSentence(pr.index);
+
+    if (!practice.text) {
+      view.append(
+        h('div', { class: 'pgyt-empty', text: 'Đang tải bản dịch tiếng Anh cho câu này…' })
+      );
+      ensureCueTranslation(pr.index).then(tr => {
+        if (tr && state.tab === 'fill') renderPractice();
+      });
+      return;
+    }
+
+    if (!pr.blanks || pr.blanksSource !== practice.text) {
+      pr.blanks = buildBlanks(practice.text, pr.index);
+      pr.blanksSource = practice.text;
+    }
     const inputs = [];
 
     const sentence = h('div', { class: 'pgyt-fill' },
@@ -894,8 +1118,11 @@
           lang: 'en',
           style: `width:${Math.max(3, p.word.length + 1)}ch`
         });
-        if (p.value) inp.value = p.value;
-        inp.addEventListener('input', () => { p.value = inp.value; inp.classList.remove('pgyt-ok', 'pgyt-bad'); });
+        if (p.userTyped) inp.value = p.userTyped;
+        inp.addEventListener('input', () => {
+          p.userTyped = inp.value;
+          inp.classList.remove('pgyt-ok', 'pgyt-bad', 'pgyt-revealed');
+        });
         inp._part = p;
         inputs.push(inp);
         return h('span', { class: 'pgyt-fill-slot' }, p.pre, inp, p.post);
@@ -914,6 +1141,11 @@
     state.ui.fillInputs = inputs;
 
     const actions = h('div', { class: 'pgyt-p-actions' },
+      (pr.checked || pr.revealed) ? h('button', {
+        class: 'pgyt-btn pgyt-btn-ghost',
+        title: 'Xoá và làm lại câu này',
+        onclick: () => { resetPracticeCard(pr.index); renderPractice(); }
+      }, icon('replay', 16), 'Làm lại') : null,
       h('button', { class: 'pgyt-btn pgyt-btn-ghost', onclick: () => { pr.revealed = true; checkFill(); } }, icon('eye', 16), 'Xem đáp án'),
       h('button', { class: 'pgyt-btn pgyt-btn-primary', onclick: checkFill }, icon('check', 16), 'Kiểm tra')
     );
@@ -953,18 +1185,20 @@
       inp.classList.toggle('pgyt-bad', !p.correct);
       if (pr.revealed && !p.correct) {
         inp.value = p.word;
-        p.value = p.word;
         inp.classList.add('pgyt-revealed');
       }
     });
 
-    box.replaceChildren(
+    const children = [
       h('div', { class: 'pgyt-score-row' },
         h('span', { class: `pgyt-score ${scoreClass(pr.lastAcc)}`, text: `${pr.lastAcc}%` }),
         h('span', { class: 'pgyt-score-msg', text: perfect ? 'Tuyệt vời! Nhấn Enter để sang câu tiếp.' : (pr.revealed ? 'Đã hiện đáp án.' : 'Ô đỏ là chưa đúng — nghe lại và sửa nhé!') })
-      ),
-      (perfect || pr.revealed) ? translationBlock() : null
-    );
+      )
+    ];
+    if (perfect || pr.revealed) {
+      children.push(translationBlock());
+    }
+    box.replaceChildren(...children);
   }
 
   function scoreClass(acc) {
@@ -976,21 +1210,33 @@
   function translationBlock() {
     const pr = state.practice;
     const cue = state.cues[pr.index];
-    const tr = state.translations[pr.index];
+    const practice = getPracticeSentence(pr.index);
     const saveBtn = h('button', {
       class: 'pgyt-btn pgyt-btn-ghost pgyt-btn-sm',
       onclick: async () => {
         try {
           await sendBg({
             action: 'SAVE_VOCAB',
-            item: { sourceText: cue.text, translatedText: tr || '', sourceLang: state.track?.languageCode || 'en', targetLang: state.targetLang }
+            item: {
+              sourceText: practice.isOriginalEng ? cue.text : practice.text,
+              translatedText: practice.isOriginalEng ? practice.meaning : cue.text,
+              sourceLang: 'en',
+              targetLang: 'vi'
+            }
           });
           saveBtn.replaceChildren(icon('check', 14), 'Đã lưu');
         } catch (e) { }
       }
     }, icon('save', 14), 'Lưu câu');
+
     return h('div', { class: 'pgyt-tr-block' },
-      h('div', { class: 'pgyt-tr-text', text: tr || '(đang dịch…)' }),
+      h('div', { class: 'pgyt-tr-text' },
+        h('span', {
+          style: 'display:block;font-size:11px;color:var(--pg-accent);font-style:normal;font-weight:600;margin-bottom:2px;',
+          text: practice.isOriginalEng ? 'Bản dịch tiếng Việt:' : 'Ý nghĩa câu trong video:'
+        }),
+        practice.meaning || '(đang tải ý nghĩa…)'
+      ),
       saveBtn
     );
   }
@@ -1038,14 +1284,18 @@
       state.ui.btnLiveAudio.classList.add('pgyt-on');
     }
 
-    let geminiApiKey = '';
+    let settings = {};
     try {
       const res = await sendBg({ action: 'GET_SETTINGS' });
-      geminiApiKey = res?.settings?.geminiApiKey || '';
+      settings = res?.settings || {};
     } catch (e) { }
 
-    if (geminiApiKey) {
-      startGeminiAudioMode(v, geminiApiKey);
+    const hasAI = !!(settings.openrouterApiKey || settings.geminiApiKey);
+    if (hasAI) {
+      const engineName = (settings.engine === 'openrouter' && settings.openrouterApiKey) || (!settings.geminiApiKey && settings.openrouterApiKey)
+        ? 'OpenRouter'
+        : 'Gemini';
+      startAIAudioMode(v, settings, engineName);
     } else {
       startWebSpeechMode(v);
     }
@@ -1064,7 +1314,7 @@
     });
   }
 
-  let geminiFailures = 0;
+  let aiFailures = 0;
 
   function addLiveCue(start, end, text, translated) {
     if (!text || !text.trim()) return;
@@ -1119,9 +1369,9 @@
     }
   }
 
-  function startGeminiAudioMode(video, apiKey) {
-    geminiFailures = 0;
-    setStatus('🎙️ Đang nghe âm thanh video bằng Gemini AI... (phát video để bắt đầu)', 0.1);
+  function startAIAudioMode(video, settings, engineName = 'AI') {
+    aiFailures = 0;
+    setStatus(`🎙️ Đang nghe âm thanh video bằng ${engineName} AI... (phát video để bắt đầu)`, 0.1);
 
     let stream = null;
     try {
@@ -1143,6 +1393,9 @@
             src.connect(window.__polyglotAudioCtx.destination);
             src.connect(dest);
             window.__polyglotAudioDest = dest;
+          }
+          if (window.__polyglotAudioCtx.state === 'suspended') {
+            window.__polyglotAudioCtx.resume().catch(() => {});
           }
           audioStream = window.__polyglotAudioDest.stream;
         }
@@ -1189,7 +1442,7 @@
         const chunkEnd = video.currentTime;
         if (chunks.length > 0 && chunkEnd > chunkStart + 0.6 && chunkEnd < chunkStart + 12.0) {
           const blob = new Blob(chunks, { type: rec.mimeType || 'audio/webm' });
-          processAudioChunkWithGemini(blob, chunkStart, chunkEnd);
+          processAudioChunkWithAI(blob, chunkStart, chunkEnd, engineName);
         }
         if (isRecording) {
           recordNextChunk();
@@ -1205,7 +1458,7 @@
     };
 
     liveAudioEngine = {
-      type: 'gemini',
+      type: 'ai',
       stop() {
         isRecording = false;
         if (timer) clearTimeout(timer);
@@ -1218,10 +1471,10 @@
     recordNextChunk();
   }
 
-  async function processAudioChunkWithGemini(blob, start, end) {
+  async function processAudioChunkWithAI(blob, start, end, engineName = 'AI') {
     try {
       const base64 = await blobToBase64(blob);
-      setStatus('🎙️ Gemini đang nhận diện giọng nói & dịch...', 0.5);
+      setStatus(`🎙️ ${engineName} đang nhận diện giọng nói & dịch...`, 0.5);
       const res = await sendBg({
         action: 'TRANSCRIBE_AUDIO',
         audioBase64: base64,
@@ -1230,48 +1483,92 @@
       });
 
       if (res && res.success && res.data && res.data.text) {
-        geminiFailures = 0;
+        aiFailures = 0;
         addLiveCue(start, end, res.data.text, res.data.translated);
-        setStatus(`🟢 Đã dịch câu: "${res.data.text.slice(0, 32)}..."`);
+        const flag = res.data.detectedLang ? `[${res.data.detectedLang.toUpperCase()}] ` : '';
+        const tag = res.engine === 'openrouter' ? '[OpenRouter] ' : (res.engine === 'gemini' ? '[Gemini] ' : '');
+        setStatus(`🟢 ${tag}${flag}Đã nhận diện: "${res.data.text.slice(0, 32)}..."`);
       } else if (res && !res.success) {
-        geminiFailures++;
-        console.warn('Lỗi nhận diện âm thanh Gemini:', res.error);
-        if (geminiFailures >= 2) {
-          setStatus(`⚠️ Gemini AI gặp lỗi (${res.error || 'STT failed'}). Tự động chuyển sang Web Speech...`);
-          const v = getVideo();
-          if (v) startWebSpeechMode(v);
+        aiFailures++;
+        console.warn('Lỗi nhận diện âm thanh AI:', res.error);
+        if (res.error === 'NO_API_KEY') {
+          setStatus('⚠️ Tính năng tự nghe âm thanh cần OpenRouter hoặc Gemini API Key (nhập trong Cài đặt popup).');
+          stopLiveAudio();
+          if (state.track) loadTrack(++state.loadToken);
           return;
         }
-        setStatus(`🎙️ Gemini gặp lỗi (${(res.error || '').slice(0, 30)}...), đang thử lại...`);
+
+        const errStr = String(res.error || '');
+        if (errStr.includes('credits') || errStr.includes('No endpoints') || errStr.includes('miễn phí') || errStr.includes('402') || errStr.includes('404')) {
+          stopLiveAudio();
+          setStatus('⚠️ OpenRouter không có model âm thanh Miễn phí (:free). Hãy nhập Gemini API Key miễn phí 100% (tại aistudio.google.com) trong Cài đặt để dùng Live AI.', null);
+          return;
+        }
+
+        if (aiFailures >= 3) {
+          setStatus(`⚠️ ${engineName} AI gặp lỗi (${(res.error || 'STT failed').slice(0, 35)}...). Đang tự động kết nối lại...`);
+        } else {
+          setStatus(`🎙️ ${engineName} gặp sự cố, đang tự động kết nối lại...`);
+        }
       } else {
-        setStatus('🎙️ Đang nghe âm thanh video...');
+        setStatus(`🎙️ Đang nghe âm thanh video (${engineName})...`);
       }
     } catch (err) {
-      geminiFailures++;
-      console.warn('Lỗi nhận diện âm thanh Gemini:', err);
-      if (geminiFailures >= 2) {
-        setStatus(`⚠️ Lỗi Gemini STT (${err.message}). Tự động chuyển sang Web Speech...`);
-        const v = getVideo();
-        if (v) startWebSpeechMode(v);
-        return;
-      }
-      setStatus('🎙️ Đang nghe âm thanh video...');
+      aiFailures++;
+      console.warn('Lỗi nhận diện âm thanh AI:', err);
+      setStatus(`🎙️ Đang nghe âm thanh video (${engineName})...`);
     }
   }
 
   function startWebSpeechMode(video) {
-    const isVi = isVietnameseTrack(state.track) || (state.targetLang === 'en');
-    setStatus(`🎙️ Đang nghe bằng Web Speech API (${isVi ? 'Tiếng Việt' : 'Tiếng Anh'})... (phát video để bắt đầu)`, 0.1);
+    // Tự động nhận diện ngôn ngữ nói của video (Hỗ trợ đa ngôn ngữ, ưu tiên tối ưu Việt & Anh)
+    const trackCode = (state.track?.languageCode || '').toLowerCase().split('-')[0];
+    const vLang = state.videoLang || trackCode;
+    let speechLang = 'en-US';
+    let langLabel = 'Tiếng Anh';
+
+    if (vLang === 'vi' || isVietnameseTrack(state.track)) {
+      speechLang = 'vi-VN';
+      langLabel = 'Tiếng Việt';
+    } else if (trackCode === 'ja') {
+      speechLang = 'ja-JP';
+      langLabel = 'Tiếng Nhật';
+    } else if (trackCode === 'ko') {
+      speechLang = 'ko-KR';
+      langLabel = 'Tiếng Hàn';
+    } else if (trackCode === 'zh') {
+      speechLang = 'zh-CN';
+      langLabel = 'Tiếng Trung';
+    } else if (trackCode === 'fr') {
+      speechLang = 'fr-FR';
+      langLabel = 'Tiếng Pháp';
+    } else if (trackCode === 'es') {
+      speechLang = 'es-ES';
+      langLabel = 'Tiếng Tây Ban Nha';
+    } else if (trackCode === 'de') {
+      speechLang = 'de-DE';
+      langLabel = 'Tiếng Đức';
+    } else if (trackCode === 'ru') {
+      speechLang = 'ru-RU';
+      langLabel = 'Tiếng Nga';
+    } else {
+      speechLang = 'en-US';
+      langLabel = 'Tiếng Anh';
+    }
+
+    setStatus(`🎙️ Đang nghe bằng Web Speech API (${langLabel})... (phát video để bắt đầu)`, 0.1);
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      setStatus('Trình duyệt không hỗ trợ Web Speech API. Vui lòng nhập Gemini API Key trong Cài đặt extension để nhận diện âm thanh.');
+      setStatus('Trình duyệt không hỗ trợ Web Speech API. Vui lòng nhập OpenRouter hoặc Gemini API Key trong Cài đặt extension để nhận diện âm thanh.');
+      stopLiveAudio();
+      if (state.track) loadTrack(++state.loadToken);
       return;
     }
 
     let recognition = new SpeechRecognition();
     recognition.continuous = true;
     recognition.interimResults = true;
-    recognition.lang = isVi ? 'vi-VN' : 'en-US';
+    recognition.lang = speechLang;
 
     let isRunning = true;
     let lastFinalTime = video.currentTime;
@@ -1299,8 +1596,18 @@
         const end = Math.max(video.currentTime, start + 1.2);
         lastFinalTime = end;
 
+        // Tự động chọn ngôn ngữ dịch song ngữ đối ứng cho cặp Việt - Anh
+        let trTarget = state.targetLang || 'vi';
+        if (speechLang === 'vi-VN' && trTarget === 'vi') trTarget = 'en';
+        else if (speechLang === 'en-US' && trTarget === 'en') trTarget = 'vi';
+
         try {
-          const trRes = await sendBg({ action: 'DO_TRANSLATION', text, sourceLang: 'auto', targetLang: state.targetLang });
+          const trRes = await sendBg({
+            action: 'DO_TRANSLATION',
+            text,
+            sourceLang: speechLang.split('-')[0],
+            targetLang: trTarget
+          });
           const translated = trRes?.data?.translatedText || '';
           addLiveCue(start, end, text, translated);
           setStatus(`🟢 Đã dịch câu: "${text.slice(0, 32)}..."`);
@@ -1311,8 +1618,15 @@
     };
 
     recognition.onerror = (e) => {
-      if (e.error !== 'no-speech') {
-        console.warn('Web Speech recognition error:', e.error);
+      console.warn('Web Speech recognition error:', e.error);
+      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
+        setStatus('⚠️ Chưa cấp quyền Micro cho YouTube (Web Speech). Bạn có thể thêm OpenRouter hoặc Gemini API Key trong Cài đặt để nhận diện trực tiếp từ video.');
+        stopLiveAudio();
+        if (state.track) loadTrack(++state.loadToken);
+      } else if (e.error === 'network') {
+        setStatus('⚠️ Lỗi kết nối Web Speech API. Vui lòng thêm OpenRouter hoặc Gemini API Key trong Cài đặt để nhận diện trực tiếp bằng AI ổn định.');
+      } else if (e.error !== 'no-speech') {
+        setStatus(`⚠️ Lỗi Web Speech: ${e.error}. Vui lòng nhập OpenRouter hoặc Gemini API Key trong Cài đặt.`);
       }
     };
 
@@ -1358,28 +1672,24 @@
 
     let info = null;
     for (let i = 0; i < 20; i++) {
-      try { info = await callMain('GET_TRACKS', null, 3000); } catch (e) { info = null; }
+      try { info = await callMain('GET_TRACKS', { videoId }, 3000); } catch (e) { info = null; }
       if (token !== state.loadToken) return;
       if (info && info.videoId === videoId && info.tracks.length) break;
-      await sleep(500);
+      await sleep(400);
     }
     if (token !== state.loadToken) return;
 
     if (!info || info.videoId !== videoId || !info.tracks.length) {
-      setStatus('Video này không có phụ đề CC sẵn. Đang tự động nhận diện giọng nói từ âm thanh video 🎙️...', 0.1);
-      startLiveAudio();
+      setStatus('⚠️ Video này không có phụ đề CC sẵn. Bạn có thể bật Live AI 🎙️ để nhận diện âm thanh trực tiếp từ video.', null);
+      renderTranscript();
       return;
     }
 
     state.tracks = info.tracks;
-    state.track = pickDefaultTrack(info.tracks);
-    if (isVietnameseTrack(state.track) && state.targetLang === 'vi') {
-      state.targetLang = 'en';
-    } else if (isEnglishTrack(state.track) && state.targetLang === 'en') {
-      state.targetLang = 'vi';
-    }
+    state.videoLang = detectVideoLang(info);
+    state.track = pickDefaultTrack(info.tracks, info);
+    applyTargetLang();
     renderTrackOptions();
-    if (state.ui.langSel) state.ui.langSel.value = state.targetLang;
     await loadTrack(token);
   }
 
@@ -1394,10 +1704,40 @@
       json = await callMain('FETCH_CAPTIONS', { videoId: state.videoId, baseUrl: track.baseUrl, languageCode: track.languageCode }, 25000);
       if (token !== state.loadToken) return;
 
-      // 2. Tải bản dịch tlang từ YouTube (tái sử dụng POT token đã capture, tránh xung đột nút CC)
+      // 2. Dự phòng: Thử tải qua background proxy nếu main world bị chặn
+      if (!json && track.baseUrl) {
+        try {
+          const bgRes = await sendBg({ action: 'FETCH_URL', url: track.baseUrl + '&fmt=json3' });
+          if (bgRes && bgRes.success && bgRes.text) {
+            try {
+              const parsed = JSON.parse(bgRes.text);
+              if (Array.isArray(parsed.events) && parsed.events.length) json = parsed;
+            } catch (_) { }
+          }
+          if (!json) {
+            const bgXmlRes = await sendBg({ action: 'FETCH_URL', url: track.baseUrl });
+            if (bgXmlRes && bgXmlRes.success && bgXmlRes.text) {
+              const doc = new DOMParser().parseFromString(bgXmlRes.text, 'text/xml');
+              const textNodes = doc.querySelectorAll('text');
+              if (textNodes.length > 0) {
+                const events = [];
+                textNodes.forEach(node => {
+                  const start = parseFloat(node.getAttribute('start') || '0');
+                  const dur = parseFloat(node.getAttribute('dur') || '2');
+                  const utf8 = (node.textContent || '').replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/\n/g, ' ').trim();
+                  if (utf8) events.push({ tStartMs: Math.round(start * 1000), dDurationMs: Math.round(dur * 1000), segs: [{ utf8 }] });
+                });
+                if (events.length > 0) json = { events };
+              }
+            }
+          }
+        } catch (e) { }
+      }
+
+      // 3. Tải bản dịch tlang từ YouTube (nếu có, không áp dụng nếu phụ đề đã là tiếng Việt)
       const srcCode = (track.languageCode || '').toLowerCase().split('-')[0];
       const targetCode = (state.targetLang || '').toLowerCase().split('-')[0];
-      if (srcCode !== targetCode) {
+      if (srcCode !== targetCode && !isVietnameseTrack(track)) {
         trJson = await callMain('FETCH_CAPTIONS', {
           videoId: state.videoId,
           baseUrl: track.baseUrl,
@@ -1409,15 +1749,15 @@
     if (token !== state.loadToken) return;
 
     if (!json) {
-      setStatus('Không tải được phụ đề CC. Đang chuyển sang tự động nghe âm thanh video 🎙️...', 0.1);
-      startLiveAudio();
+      setStatus('⚠️ Không thể tải phụ đề CC của video này. Bạn có thể nhấn Tải lại hoặc bật Live AI 🎙️ để nhận diện trực tiếp từ video.', null);
+      renderTranscript();
       return;
     }
 
     state.cues = parseJson3(json, track.kind === 'asr');
     if (!state.cues.length) {
-      setStatus('Phụ đề trống. Đang chuyển sang tự động nghe âm thanh video 🎙️...');
-      startLiveAudio();
+      setStatus('⚠️ Phụ đề trống. Vui lòng chọn track phụ đề khác ở menu trên hoặc bật Live AI 🎙️.', null);
+      renderTranscript();
       return;
     }
     state.translations = new Array(state.cues.length).fill(null);
@@ -1530,18 +1870,13 @@
     const t = state.tracks[parseInt(e.target.value, 10)];
     if (!t) return;
     state.track = t;
-    if (isVietnameseTrack(t) && state.targetLang === 'vi') {
-      state.targetLang = 'en';
-      if (state.ui.langSel) state.ui.langSel.value = 'en';
-    } else if (isEnglishTrack(t) && state.targetLang === 'en') {
-      state.targetLang = 'vi';
-      if (state.ui.langSel) state.ui.langSel.value = 'vi';
-    }
+    applyTargetLang();
     loadTrack(++state.loadToken);
   }
 
   async function onLangChange(e) {
     state.targetLang = e.target.value;
+    state.userTargetLang = e.target.value;
     try {
       const r = await sendBg({ action: 'GET_SETTINGS' });
       const settings = { ...(r && r.settings), targetLang: state.targetLang };
@@ -1594,7 +1929,10 @@
       const [s, l] = await Promise.all([sendBg({ action: 'GET_SETTINGS' }), sendBg({ action: 'GET_LANGUAGES' })]);
       if (s && s.settings) {
         if (s.settings.ytEnabled === false) isEnabled = false;
-        if (s.settings.targetLang) state.targetLang = s.settings.targetLang;
+        if (s.settings.targetLang) {
+          state.userTargetLang = s.settings.targetLang;
+          state.targetLang = s.settings.targetLang;
+        }
       }
       if (l && Array.isArray(l.languages)) state.languages = l.languages.filter(x => x.code !== 'auto');
     } catch (e) { }
@@ -1611,21 +1949,25 @@
               onNavigate();
             }
           }
-          if (val.targetLang && val.targetLang !== state.targetLang) {
-            state.targetLang = val.targetLang;
-            if (state.ui.langSel) state.ui.langSel.value = val.targetLang;
-            translateAll();
+          if (val.targetLang && val.targetLang !== state.userTargetLang) {
+            state.userTargetLang = val.targetLang;
+            if (!isVietnameseTrack(state.track)) {
+              state.targetLang = val.targetLang;
+              if (state.ui.langSel) state.ui.langSel.value = val.targetLang;
+              translateAll();
+            }
           }
         }
       });
     } catch (e) { }
 
     document.addEventListener('yt-navigate-finish', onNavigate);
+    document.addEventListener('yt-page-data-updated', onNavigate);
     // Dự phòng: YouTube render lại DOM hoặc điều hướng mà không bắn event
     setInterval(() => {
       if (isEnabled && getVideoIdFromUrl()) mountUI();
       onNavigate();
-    }, 1500);
+    }, 1200);
 
     onNavigate();
     requestAnimationFrame(tick);

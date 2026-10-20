@@ -82,6 +82,39 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  // Tải dữ liệu URL từ background (dự phòng vượt rào cản CORS/CSP của trang)
+  if (request.action === "FETCH_URL") {
+    (async () => {
+      try {
+        const res = await fetch(request.url, {
+          headers: request.headers || {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Referer': 'https://www.youtube.com/'
+          }
+        });
+        const text = await res.text();
+        sendResponse({ success: res.ok, status: res.status, text });
+      } catch (err) {
+        sendResponse({ success: false, error: err.message });
+      }
+    })();
+    return true;
+  }
+
+  // Tải URL dự phòng (phụ đề timedtext không bị CORS)
+  if (request.action === "FETCH_URL") {
+    (async () => {
+      try {
+        const res = await fetch(request.url, { credentials: 'omit' });
+        const text = await res.text();
+        sendResponse({ success: res.ok, status: res.status, text });
+      } catch (error) {
+        sendResponse({ success: false, error: error.message });
+      }
+    })();
+    return true;
+  }
+
   // Dịch hàng loạt (phụ đề video)
   if (request.action === "TRANSLATE_BATCH") {
     (async () => {
@@ -95,22 +128,51 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
-  // Nhận diện giọng nói từ âm thanh video trực tiếp (Gemini Audio)
+  // Nhận diện giọng nói từ âm thanh video trực tiếp (OpenRouter / Gemini Audio)
   if (request.action === "TRANSCRIBE_AUDIO") {
     (async () => {
       try {
         const settings = await Storage.getSettings();
-        if (!settings.geminiApiKey) {
+        const hasOpenRouter = !!settings.openrouterApiKey;
+        const hasGemini = !!settings.geminiApiKey;
+
+        if (!hasOpenRouter && !hasGemini) {
           sendResponse({ success: false, error: 'NO_API_KEY' });
           return;
         }
+
+        // Ưu tiên theo engine người dùng chọn, hoặc theo key khả dụng
+        const preferOpenRouter = (settings.engine === 'openrouter' && hasOpenRouter) || (!hasGemini && hasOpenRouter);
+
+        if (preferOpenRouter) {
+          try {
+            const result = await Translator.transcribeAudioOpenRouter(
+              request.audioBase64,
+              request.mimeType || 'audio/webm',
+              request.targetLang || settings.targetLang || 'vi',
+              settings.openrouterApiKey,
+              settings.openrouterModel
+            );
+            sendResponse({ success: true, data: result, engine: 'openrouter' });
+            return;
+          } catch (orErr) {
+            console.warn("OpenRouter Audio failed:", orErr);
+            if (!hasGemini) {
+              sendResponse({ success: false, error: orErr.message || 'OpenRouter STT failed' });
+              return;
+            }
+            // Nếu có cả Gemini key thì thử fallback sang Gemini
+          }
+        }
+
+        // Dùng Gemini Audio STT
         const result = await Translator.transcribeAudioGemini(
           request.audioBase64,
           request.mimeType || 'audio/webm',
           request.targetLang || settings.targetLang || 'vi',
           settings.geminiApiKey
         );
-        sendResponse({ success: true, data: result });
+        sendResponse({ success: true, data: result, engine: 'gemini' });
       } catch (error) {
         console.error("Transcribe Audio Error:", error);
         sendResponse({ success: false, error: error.message || 'Transcribe failed' });

@@ -19,12 +19,13 @@ function initShadowDOM() {
 
   shadowRoot = shadowContainer.attachShadow({ mode: 'open' });
 
-  // Nhúng CSS vào Shadow DOM
-  const styleUrl = chrome.runtime.getURL('content/content.css');
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = styleUrl;
-  shadowRoot.appendChild(link);
+  // Nhúng CSS vào Shadow DOM bằng thẻ <style> thay vì <link> để chống lỗi CORS/CSP trên YouTube
+  const style = document.createElement('style');
+  shadowRoot.appendChild(style);
+  fetch(chrome.runtime.getURL('content/content.css'))
+    .then(r => r.text())
+    .then(css => { style.textContent = css; })
+    .catch(() => {});
 }
 
 // Hàm dọn dẹp UI

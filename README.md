@@ -40,7 +40,7 @@
   * 🎧 **Dictation (Nghe - Chép chính tả)**: Tự động ngắt từng câu, cho phép nghe lặp lại và gõ lại câu nghe được, hệ thống tự chấm % độ chính xác và tô màu phát hiện từ sai/thiếu.
   * ✍️ **Điền từ vào chỗ trống (Fill-in-the-blank)**: Ẩn các từ khóa quan trọng để người học tự đoán từ, hỗ trợ phím tắt và gợi ý chữ cái đầu.
 * **Nhận diện giọng nói trực tiếp (Live AI Speech-to-Text)**:
-  * Hỗ trợ nhận diện lời thoại trực tiếp từ âm thanh video bằng Gemini Multimodal Audio hoặc Web Speech API ngay cả khi video không có phụ đề sẵn.
+  * Hỗ trợ nhận diện lời thoại trực tiếp từ âm thanh video bằng **OpenRouter AI** hoặc **Gemini Multimodal Audio** ngay cả khi video không có phụ đề sẵn, tối ưu song ngữ Việt - Anh.
 
 ---
 

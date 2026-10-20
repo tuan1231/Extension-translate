@@ -403,21 +403,34 @@ CRITICAL RULES:
   },
 
   /**
-   * Nhận diện lời nói trực tiếp từ file âm thanh và dịch sang ngôn ngữ đích bằng Gemini Audio
+   * Nhận diện lời nói trực tiếp từ file âm thanh và dịch đa ngôn ngữ bằng Gemini Audio
+   * Tối ưu hóa chuyên sâu cho Tiếng Việt và Tiếng Anh (song ngữ đối ứng thông minh)
    */
   async transcribeAudioGemini(base64Audio, mimeType, targetLang, apiKey) {
     const list = (typeof LANGUAGES !== 'undefined' ? LANGUAGES : (typeof window !== 'undefined' && window.LANGUAGES ? window.LANGUAGES : []));
-    const targetLangName = list.find(l => l.code === targetLang)?.name || targetLang;
+    const targetLangName = list.find(l => l.code === targetLang)?.name || (targetLang === 'vi' ? 'Vietnamese' : 'English');
 
-    const systemPrompt = `You are a real-time speech recognizer and translator for video audio.
-Instructions:
-1. Listen to the audio chunk carefully. Transcribe the exact speech spoken in its original language (supports Vietnamese, English, and other languages).
-2. Translate that speech into ${targetLangName} (for example, if spoken in Vietnamese, translate to English; if spoken in English, translate to Vietnamese).
-3. Return ONLY a valid JSON object matching this schema:
-{"text": "transcribed spoken words", "translated": "translation into ${targetLangName}"}
-Rules:
-- If there is NO speech (only silence, background music, laughter, applause, sound effects, or indistinct murmur): return {"text": "", "translated": ""}.
-- Do NOT wrap in markdown code blocks like \`\`\`json. Return pure JSON string only.`;
+    const systemPrompt = `You are a real-time, highly accurate multilingual speech recognition and translation AI for video audio.
+Languages Supported: All world languages (English, Vietnamese, Japanese, Korean, Chinese, French, Spanish, German, Russian, etc.).
+
+CRITICAL INSTRUCTIONS & SPECIALIZED OPTIMIZATION:
+1. Speech Recognition (STT):
+   - Listen to the audio chunk carefully. Transcribe EXACT words spoken in their original language.
+   - For VIETNAMESE: Output 100% accurate Vietnamese diacritics and tones (dấu thanh: sắc, huyền, hỏi, ngã, nặng; dấu mũ/móc: ă, â, ê, ô, ơ, ư, đ). Correctly recognize Northern, Central, and Southern regional accents. Accurately preserve natural English technical/colloquial loanwords (e.g., "setup", "fix bug", "review", "deadline", "check", "meeting", "share", "content").
+   - For ENGLISH: Accurately capture native accents (US, UK, Australian, Canadian, Global), contractions ("I'm", "don't", "wanna", "gonna"), idioms, and casual expressions.
+   - For other languages (Japanese, Korean, Chinese, Spanish, French, etc.): Transcribe accurately in that language script.
+
+2. Smart Bilingual Translation (Tối ưu cặp Việt - Anh):
+   - If the speech is in ENGLISH: Translate to natural, fluent, context-aware VIETNAMESE.
+   - If the speech is in VIETNAMESE: Translate to idiomatic, conversational ENGLISH.
+   - If the speech is in ANOTHER language (e.g., Japanese, Korean, Chinese, etc.): Translate to ${targetLangName}.
+   - If the speech matches ${targetLangName}: If target is Vietnamese and speech is Vietnamese -> translate to English; if target is English and speech is English -> translate to Vietnamese. (ALWAYS guarantee a complementary bilingual pair).
+
+3. Output Format:
+   - Return ONLY a valid JSON object strictly matching this schema:
+   {"text": "transcribed spoken words in original language", "translated": "fluent translation", "detectedLang": "en|vi|..."}
+   - If there is NO discernable human speech (only silence, background music, beats, laughing, sound effects, intro/outro jingle, background noise): RETURN EXACTLY {"text": "", "translated": "", "detectedLang": ""}.
+   - Do NOT wrap in markdown code blocks like \`\`\`json. Return pure JSON string only.`;
 
     const payload = {
       system_instruction: {
@@ -426,7 +439,7 @@ Rules:
       contents: [{
         role: "user",
         parts: [
-          { text: `Transcribe the speech and translate to ${targetLangName}.` },
+          { text: `Transcribe speech and translate. Target language is ${targetLangName}.` },
           {
             inline_data: {
               mime_type: mimeType || "audio/webm",
@@ -467,17 +480,18 @@ Rules:
           const data = await response.json();
           this._activeModel = m;
           const candidateText = data.candidates?.[0]?.content?.parts?.[0]?.text;
-          if (!candidateText) return { text: '', translated: '' };
+          if (!candidateText) return { text: '', translated: '', detectedLang: '' };
 
           try {
             const cleanJson = candidateText.replace(/^```json\s*/i, '').replace(/```\s*$/, '').trim();
             const parsed = JSON.parse(cleanJson);
             return {
               text: (parsed.text || parsed.original || '').trim(),
-              translated: (parsed.translated || parsed.translation || '').trim()
+              translated: (parsed.translated || parsed.translation || '').trim(),
+              detectedLang: (parsed.detectedLang || '').toLowerCase().trim()
             };
           } catch (e) {
-            return { text: candidateText.trim(), translated: '' };
+            return { text: candidateText.trim(), translated: '', detectedLang: '' };
           }
         } else {
           lastErr = await response.text();
@@ -488,6 +502,143 @@ Rules:
     }
 
     throw new Error(`Gemini Audio STT error: ${lastErr}`);
+  },
+
+  /**
+   * Nhận diện và dịch giọng nói trực tiếp qua OpenRouter AI (Multimodal Audio & STT)
+   * Tối ưu đa ngôn ngữ, đặc biệt là cặp Tiếng Việt và Tiếng Anh
+   */
+  async transcribeAudioOpenRouter(base64Audio, mimeType = 'audio/webm', targetLang = 'vi', apiKey, preferredModel = '') {
+    if (!apiKey) throw new Error('NO_API_KEY');
+    const cleanKey = (apiKey || '').trim().replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim();
+
+    const list = (typeof LANGUAGES !== 'undefined' ? LANGUAGES : (typeof window !== 'undefined' && window.LANGUAGES ? window.LANGUAGES : []));
+    const targetLangName = list.find(l => l.code === targetLang)?.name || targetLang;
+
+    // Chuẩn hoá format audio cho OpenRouter
+    let format = 'webm';
+    const lowerMime = (mimeType || '').toLowerCase();
+    if (lowerMime.includes('wav')) format = 'wav';
+    else if (lowerMime.includes('mp3')) format = 'mp3';
+    else if (lowerMime.includes('ogg')) format = 'ogg';
+    else if (lowerMime.includes('flac')) format = 'flac';
+    else if (lowerMime.includes('aac') || lowerMime.includes('m4a')) format = 'm4a';
+
+    const systemPrompt = `You are a real-time speech recognizer and translator for YouTube video audio.
+Primary focus: Accurate transcription and natural translation for Vietnamese (vi) and English (en), as well as other world languages.
+Rules:
+1. Listen carefully to the spoken voice in the audio.
+2. Transcribe the spoken words in the original language accurately into "text".
+3. Translate the transcribed words naturally into ${targetLangName} into "translated".
+4. Identify the spoken language code (e.g. "vi", "en", "ja", "ko", "zh", "fr", "es", "de") into "detectedLang".
+5. Bilingual rule for Vietnamese and English:
+   - If spoken speech is Vietnamese, translate into English.
+   - If spoken speech is English, translate into Vietnamese (or ${targetLangName}).
+   - If spoken speech is any other language, translate into ${targetLangName}.
+6. If the audio is silent, or contains only music/beats, sound effects, breathing, or laughter without speech: RETURN EXACTLY {"text": "", "translated": "", "detectedLang": ""}.
+7. Return strictly valid JSON: {"text": "...", "translated": "...", "detectedLang": "..."} without markdown or code fences.`;
+
+    // Danh sách model hỗ trợ audio input trên OpenRouter (TUYỆT ĐỐI KHÔNG thêm openrouter/free hoặc model text-only)
+    const candidateModels = [];
+    if (preferredModel && preferredModel !== 'openrouter/free' && !preferredModel.endsWith(':free')) {
+      candidateModels.push(preferredModel);
+    }
+    const audioCandidates = [
+      'google/gemini-2.5-flash',
+      'google/gemini-2.5-flash-lite',
+      'openai/gpt-audio-mini',
+      'google/gemini-3.5-flash-lite'
+    ];
+    for (const m of audioCandidates) {
+      if (!candidateModels.includes(m)) candidateModels.push(m);
+    }
+
+    let lastErr = '';
+
+    for (const model of candidateModels) {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${cleanKey}`,
+            'Content-Type': 'application/json',
+            'HTTP-Referer': 'https://github.com/polyglot-ai-translator',
+            'X-Title': 'Polyglot AI Translator'
+          },
+          body: JSON.stringify({
+            model: model,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: `Transcribe and translate to ${targetLangName}. Respond in JSON format only.` },
+                  {
+                    type: 'input_audio',
+                    input_audio: {
+                      data: base64Audio,
+                      format: format
+                    },
+                    inputAudio: {
+                      data: base64Audio,
+                      format: format
+                    }
+                  }
+                ]
+              }
+            ],
+            temperature: 0.1
+          })
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          const candidateText = data.choices?.[0]?.message?.content?.trim();
+          if (!candidateText) return { text: '', translated: '', detectedLang: '', model };
+
+          try {
+            const cleanJson = candidateText.replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/, '').trim();
+            const parsed = JSON.parse(cleanJson);
+            return {
+              text: (parsed.text || parsed.original || '').trim(),
+              translated: (parsed.translated || parsed.translation || '').trim(),
+              detectedLang: (parsed.detectedLang || '').toLowerCase().trim(),
+              model: model
+            };
+          } catch (e) {
+            // Thử regex trích xuất nếu JSON bị dính text ngoài
+            const mText = candidateText.match(/"text"\s*:\s*"([^"]+)"/);
+            const mTr = candidateText.match(/"translated"\s*:\s*"([^"]+)"/);
+            const mLang = candidateText.match(/"detectedLang"\s*:\s*"([^"]+)"/);
+            if (mText) {
+              return {
+                text: mText[1].trim(),
+                translated: mTr ? mTr[1].trim() : '',
+                detectedLang: mLang ? mLang[1].trim() : '',
+                model: model
+              };
+            }
+            return { text: candidateText.trim(), translated: '', detectedLang: '', model: model };
+          }
+        } else {
+          const errText = await res.text();
+          console.warn(`OpenRouter audio model [${model}] failed (${res.status}):`, errText);
+          lastErr = `[${model}] ${errText}`;
+        }
+      } catch (err) {
+        console.warn(`OpenRouter fetch error for [${model}]:`, err.message);
+        lastErr = `[${model}] ${err.message}`;
+      }
+    }
+
+    if (lastErr.includes('insufficient credits') || lastErr.includes('Payment Required') || lastErr.includes('402')) {
+      throw new Error('Tài khoản OpenRouter chưa có credit để dùng model âm thanh (OpenRouter hiện không có model âm thanh miễn phí). Hãy nạp credits trên OpenRouter hoặc nhập Gemini API Key miễn phí 100% tại aistudio.google.com để dùng Live AI.');
+    }
+    if (lastErr.includes('No endpoints found') || lastErr.includes('Filter by Input Audio Support') || lastErr.includes('input audio') || lastErr.includes('404')) {
+      throw new Error('OpenRouter hiện không có model Miễn phí (:free) nào hỗ trợ âm thanh video. Để dùng Live AI miễn phí 100%, vui lòng nhập Gemini API Key (lấy miễn phí tại aistudio.google.com) trong Cài đặt extension.');
+    }
+
+    throw new Error(`OpenRouter Audio STT error: ${lastErr}`);
   },
 
   _openrouterModelsCache: { timestamp: 0, models: [] },
