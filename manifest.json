@@ -7,7 +7,9 @@
     "activeTab",
     "contextMenus",
     "storage",
-    "scripting"
+    "scripting",
+    "offscreen",
+    "tts"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -24,6 +26,18 @@
       "matches": ["<all_urls>"],
       "js": ["content/content.js"],
       "run_at": "document_end"
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content/youtube-main.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["content/youtube.js"],
+      "css": ["content/youtube.css"],
+      "run_at": "document_idle"
     }
   ],
   "web_accessible_resources": [

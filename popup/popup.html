@@ -31,7 +31,7 @@
             <label>Nguồn</label>
             <div class="badge" id="source-lang-badge">Tự động (Auto)</div>
           </div>
-          <div class="swap-icon">
+          <div class="swap-icon" id="btn-swap-lang" title="Đảo chiều dịch (Việt ⇄ Anh)">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"/></svg>
           </div>
           <div class="lang-box">
@@ -99,13 +99,40 @@
                 <span>Chuẩn ngữ cảnh (Cần API Key).</span>
               </div>
             </label>
+            <label class="radio-label">
+              <input type="radio" name="engine" value="openrouter">
+              <div class="radio-card">
+                <strong>OpenRouter AI (Miễn phí)</strong>
+                <span>Hỗ trợ các model Free (openrouter/free, Llama, DeepSeek...).</span>
+              </div>
+            </label>
           </div>
+        </div>
+
+        <div class="setting-group" id="openrouter-key-group" style="display:none;">
+          <label>OpenRouter API Key</label>
+          <div style="display:flex;gap:6px;">
+            <input type="password" id="openrouter-api-key" placeholder="sk-or-v1-..." class="modern-input" style="flex:1;">
+            <button id="btn-test-openrouter-key" class="secondary-btn" type="button" style="white-space:nowrap;padding:0 10px;font-size:12px;cursor:pointer;">Kiểm tra</button>
+          </div>
+          <div style="margin-top:8px;">
+            <label style="font-size:12px;color:var(--text-sub, #888);margin-bottom:4px;display:block;">Model OpenRouter (Tối ưu Free Tier):</label>
+            <select id="openrouter-model-select" class="modern-select" style="font-size:12px;width:100%;">
+              <option value="openrouter/free">openrouter/free (Tự động chọn model Free tốt nhất)</option>
+            </select>
+          </div>
+          <div id="openrouter-model-info" style="font-size:12px;margin-top:6px;line-height:1.4;display:none;"></div>
+          <p class="help-text">Lấy key miễn phí tại <a href="https://openrouter.ai/keys" target="_blank">openrouter.ai/keys</a> (Chọn các model :free để sử dụng 100% miễn phí).</p>
         </div>
 
         <div class="setting-group" id="gemini-key-group">
           <label>Gemini API Key</label>
-          <input type="password" id="gemini-api-key" placeholder="AQ... hoặc AIzaSy..." class="modern-input">
-          <p class="help-text">Lấy key miễn phí tại <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>.</p>
+          <div style="display:flex;gap:6px;">
+            <input type="password" id="gemini-api-key" placeholder="AQ... hoặc AIzaSy..." class="modern-input" style="flex:1;">
+            <button id="btn-test-key" class="secondary-btn" type="button" style="white-space:nowrap;padding:0 10px;font-size:12px;cursor:pointer;">Kiểm tra</button>
+          </div>
+          <div id="gemini-model-info" style="font-size:12px;margin-top:6px;line-height:1.4;display:none;"></div>
+          <p class="help-text">Tự động phát hiện model mới nhất hỗ trợ Free từ <a href="https://aistudio.google.com/" target="_blank">Google AI Studio</a>.</p>
         </div>
 
         <div class="setting-group">
@@ -121,6 +148,17 @@
           <div class="toggle-info">
             <strong>Hiện Icon nổi khi bôi đen</strong>
             <span>Hiển thị icon dịch nhanh khi bạn bôi đen văn bản.</span>
+          </div>
+        </div>
+
+        <div class="setting-group checkbox-group">
+          <label class="toggle">
+            <input type="checkbox" id="yt-enabled" checked>
+            <span class="slider"></span>
+          </label>
+          <div class="toggle-info">
+            <strong>Hỗ trợ YouTube & Luyện nghe (TOEIC / IELTS)</strong>
+            <span>Phụ đề song ngữ trên video và bảng luyện nghe Dictation / Điền từ.</span>
           </div>
         </div>
 

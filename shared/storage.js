@@ -4,10 +4,13 @@ const Storage = {
     return new Promise((resolve) => {
       chrome.storage.local.get(['polyglot_settings'], (result) => {
         resolve(result.polyglot_settings || {
-          engine: 'google', // 'google' | 'gemini'
+          engine: 'google', // 'google' | 'gemini' | 'openrouter'
           geminiApiKey: '',
+          openrouterApiKey: '',
+          openrouterModel: 'openrouter/free',
           targetLang: 'vi', // Default target language
-          showFloatingIcon: true
+          showFloatingIcon: true,
+          ytEnabled: true
         });
       });
     });

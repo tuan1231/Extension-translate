@@ -39,6 +39,9 @@ function clearUI() {
 
 // Xử lý bắt sự kiện bôi đen
 document.addEventListener('mouseup', async (e) => {
+  // Bỏ qua nếu extension context đã bị huỷ (sau khi reload extension)
+  if (!chrome.runtime?.id) return;
+
   // Bỏ qua nếu click vào bên trong shadow DOM
   if (e.composedPath().includes(shadowContainer)) return;
 
@@ -52,6 +55,7 @@ document.addEventListener('mouseup', async (e) => {
       });
     });
   } catch (err) {
+    if (err?.message?.includes('context invalidated')) return;
     console.warn("Polyglot: Vui lòng nhấn F5 (Tải lại trang) để Extension hoạt động bình thường.", err);
     return;
   }
@@ -145,6 +149,13 @@ async function showDialog(text, rect) {
     console.warn("Polyglot: Cannot fetch settings.", err);
   }
 
+  // Tự động thông minh: Nếu đoạn bôi đen là tiếng Việt mà target đang là 'vi' -> tự đổi sang 'en' (Việt -> Anh)
+  const isVi = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)
+    || /\b(là|và|của|các|trong|người|với|được|cho|không|có|những|để|khi|này|tại|từ|về|đã|sẽ)\b/i.test(text);
+  if (isVi && currentTargetLang === 'vi') {
+    currentTargetLang = 'en';
+  }
+
   const dialog = document.createElement('div');
   dialog.className = 'polyglot-dialog';
   
@@ -166,7 +177,7 @@ async function showDialog(text, rect) {
       <div class="polyglot-title" style="display: flex; align-items: center; gap: 6px;">
         <svg viewBox="0 0 24 24"><path d="M12.87 15.07l-2.54-2.51.03-.03c1.74-1.94 2.98-4.17 3.71-6.53H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>
         <span id="polyglot-lang-info">Auto</span>
-        <span style="color: #94a3b8;">→</span>
+        <button id="polyglot-btn-swap-dir" title="Đảo chiều dịch (Việt ⇄ Anh)" style="background: rgba(148,163,184,0.15); border: 1px solid rgba(148,163,184,0.3); border-radius: 4px; color: inherit; cursor: pointer; padding: 1px 6px; font-size: 13px;">⇄</button>
         <select id="polyglot-inline-target-lang" class="polyglot-inline-select" style="background: transparent; border: 1px solid rgba(148,163,184,0.4); border-radius: 4px; color: inherit; font-size: 13px; font-weight: 600; padding: 2px 4px; outline: none; cursor: pointer; font-family: inherit;">
           ${optionsHtml}
         </select>
@@ -248,6 +259,24 @@ async function showDialog(text, rect) {
       targetContainer.innerHTML = `<span class="polyglot-error">Lỗi kết nối. Vui lòng tải lại (F5) trang web.</span>`;
     }
   };
+
+  // Đảo chiều dịch (Việt ⇄ Anh)
+  const swapBtn = dialog.querySelector('#polyglot-btn-swap-dir');
+  if (swapBtn) {
+    swapBtn.addEventListener('click', () => {
+      currentTargetLang = (currentTargetLang === 'vi' ? 'en' : 'vi');
+      if (inlineSelect) inlineSelect.value = currentTargetLang;
+      execTranslation();
+    });
+  }
+
+  // Đổi ngôn ngữ đích inline
+  if (inlineSelect) {
+    inlineSelect.addEventListener('change', (e) => {
+      currentTargetLang = e.target.value;
+      execTranslation();
+    });
+  }
 
   // Nút Copy
   dialog.querySelector('#polyglot-btn-copy').addEventListener('click', () => {
@@ -346,79 +375,15 @@ function escapeHtml(unsafe) {
       .replace(/\n/g, "<br>");
 }
 // --- Audio TTS Helpers ---
+// Audio được phát trong Offscreen Document của extension (qua service worker),
+// nên không bị CSP của trang web chặn và hỗ trợ giọng Google tự nhiên cho mọi ngôn ngữ.
 function playHighQualityTTS(text, lang) {
-  if (window.currentPolyglotAudio) window.currentPolyglotAudio.pause();
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
-
-  const chunks = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
-  let playIndex = 0;
-
-  const playNext = async () => {
-    if (playIndex >= chunks.length) return;
-    let chunk = chunks[playIndex].trim();
-    if (!chunk) {
-      playIndex++;
-      return playNext();
-    }
-
-    if (chunk.length > 200) chunk = chunk.substring(0, 200);
-
-    const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${lang}&q=${encodeURIComponent(chunk)}`;
-    
-    try {
-      const response = await new Promise(res => chrome.runtime.sendMessage({
-        action: "FETCH_TTS",
-        url: url
-      }, res));
-      
-      if (!response || !response.success) throw new Error('Fetch TTS failed');
-      
-      const audio = new Audio(response.dataUrl);
-      window.currentPolyglotAudio = audio;
-
-      audio.onended = () => {
-        playIndex++;
-        playNext();
-      };
-
-      audio.onerror = () => {
-        fallbackTTS(chunk, lang);
-        playIndex++;
-        setTimeout(playNext, 2000);
-      };
-
-      await audio.play();
-    } catch (e) {
-      fallbackTTS(chunk, lang);
-      playIndex++;
-      setTimeout(playNext, 2000);
-    }
-  };
-
-  playNext();
-}
-
-function fallbackTTS(text, lang) {
-  if (!window.speechSynthesis) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length > 0) {
-    const voice = voices.find(v => v.lang.toLowerCase().startsWith(lang.toLowerCase()));
-    if (voice) {
-      utterance.voice = voice;
-    }
+  if (!text) return;
+  try {
+    chrome.runtime.sendMessage({ action: "TTS_SPEAK", text, lang }, () => {
+      void chrome.runtime.lastError;
+    });
+  } catch (e) {
+    console.warn("Polyglot TTS error (thử tải lại trang):", e);
   }
-
-  utterance.lang = lang;
-  utterance.rate = 0.95;
-  window.speechSynthesis.speak(utterance);
-}
-
-// Pre-load voices for fallback TTS
-if (window.speechSynthesis) {
-  window.speechSynthesis.getVoices();
-  window.speechSynthesis.onvoiceschanged = () => {
-    window.speechSynthesis.getVoices();
-  };
 }

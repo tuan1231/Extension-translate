@@ -38,6 +38,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.querySelector(`input[name="engine"][value="${settings.engine}"]`).checked = true;
   document.getElementById('default-target-lang').value = settings.targetLang || 'vi';
   document.getElementById('show-floating-icon').checked = settings.showFloatingIcon !== false;
+  document.getElementById('yt-enabled').checked = settings.ytEnabled !== false;
 
   const apiKeyInput = document.getElementById('gemini-api-key');
   apiKeyInput.value = ''; // Luôn làm rỗng input vì lý do bảo mật
@@ -47,40 +48,225 @@ document.addEventListener('DOMContentLoaded', async () => {
     apiKeyInput.placeholder = 'AQ... hoặc AIzaSy...';
   }
 
+  const openrouterKeyInput = document.getElementById('openrouter-api-key');
+  const openrouterModelSelect = document.getElementById('openrouter-model-select');
+  if (openrouterKeyInput) {
+    openrouterKeyInput.value = '';
+    if (settings.openrouterApiKey) {
+      openrouterKeyInput.placeholder = 'Đã lưu Key. Nhập để thay đổi...';
+    } else {
+      openrouterKeyInput.placeholder = 'sk-or-v1-...';
+    }
+  }
+  if (settings.openrouterModel && openrouterModelSelect) {
+    let exists = false;
+    for (let opt of openrouterModelSelect.options) {
+      if (opt.value === settings.openrouterModel) { exists = true; break; }
+    }
+    if (!exists) {
+      openrouterModelSelect.add(new Option(settings.openrouterModel, settings.openrouterModel));
+    }
+    openrouterModelSelect.value = settings.openrouterModel;
+  }
+
   // Apply to Translate Tab
   targetSelect.value = settings.targetLang || 'vi';
 
   // Toggle API key input visibility based on engine
   const toggleKeyGroup = () => {
-    const isGemini = document.querySelector('input[name="engine"]:checked').value === 'gemini';
-    document.getElementById('gemini-key-group').style.display = isGemini ? 'block' : 'none';
+    const selected = document.querySelector('input[name="engine"]:checked')?.value;
+    const geminiGroup = document.getElementById('gemini-key-group');
+    const openrouterGroup = document.getElementById('openrouter-key-group');
+    if (geminiGroup) geminiGroup.style.display = (selected === 'gemini') ? 'block' : 'none';
+    if (openrouterGroup) openrouterGroup.style.display = (selected === 'openrouter') ? 'block' : 'none';
   };
   document.querySelectorAll('input[name="engine"]').forEach(r => r.addEventListener('change', toggleKeyGroup));
   toggleKeyGroup();
 
+  // Kiểm tra Gemini API Key & Model động mới nhất
+  const btnTestKey = document.getElementById('btn-test-key');
+  const modelInfoEl = document.getElementById('gemini-model-info');
+
+  const runTestKey = async () => {
+    let rawKey = document.getElementById('gemini-api-key')?.value.trim();
+    if (!rawKey) {
+      rawKey = settings.geminiApiKey || '';
+    }
+    const cleanKey = rawKey.replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim();
+
+    if (!cleanKey) {
+      if (modelInfoEl) {
+        modelInfoEl.style.display = 'block';
+        modelInfoEl.style.color = '#ef4444';
+        modelInfoEl.textContent = 'Vui lòng nhập API Key trước khi kiểm tra.';
+      }
+      return;
+    }
+    if (btnTestKey) {
+      btnTestKey.disabled = true;
+      btnTestKey.textContent = 'Đang kiểm tra...';
+    }
+    if (modelInfoEl) {
+      modelInfoEl.style.display = 'block';
+      modelInfoEl.style.color = '#64748b';
+      modelInfoEl.textContent = 'Đang truy vấn Google ModelService.ListModels...';
+    }
+
+    try {
+      if (Translator._modelsCache) {
+        delete Translator._modelsCache[cleanKey];
+      }
+      const models = await Translator.getAvailableGeminiModels(cleanKey);
+      if (modelInfoEl) {
+        modelInfoEl.style.color = '#10b981';
+        modelInfoEl.innerHTML = `✓ Kết nối thành công!<br><strong>Model mới nhất:</strong> <code>${models[0]}</code> (${models.length} models)`;
+      }
+    } catch (err) {
+      if (modelInfoEl) {
+        modelInfoEl.style.color = '#ef4444';
+        modelInfoEl.textContent = `✕ ${err.message || 'Không thể kết nối đến Gemini'}`;
+      }
+    } finally {
+      if (btnTestKey) {
+        btnTestKey.disabled = false;
+        btnTestKey.textContent = 'Kiểm tra';
+      }
+    }
+  };
+
+  if (btnTestKey) {
+    btnTestKey.addEventListener('click', runTestKey);
+  }
+
+  // Kiểm tra OpenRouter API Key & Tải danh sách model Free
+  const btnTestOpenRouter = document.getElementById('btn-test-openrouter-key');
+  const openrouterInfoEl = document.getElementById('openrouter-model-info');
+
+  const runTestOpenRouterKey = async () => {
+    let rawKey = document.getElementById('openrouter-api-key')?.value.trim();
+    if (!rawKey) {
+      rawKey = settings.openrouterApiKey || '';
+    }
+    const cleanKey = rawKey.replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim();
+
+    if (!cleanKey) {
+      if (openrouterInfoEl) {
+        openrouterInfoEl.style.display = 'block';
+        openrouterInfoEl.style.color = '#ef4444';
+        openrouterInfoEl.textContent = 'Vui lòng nhập OpenRouter API Key trước khi kiểm tra.';
+      }
+      return;
+    }
+    if (btnTestOpenRouter) {
+      btnTestOpenRouter.disabled = true;
+      btnTestOpenRouter.textContent = 'Đang kiểm tra...';
+    }
+    if (openrouterInfoEl) {
+      openrouterInfoEl.style.display = 'block';
+      openrouterInfoEl.style.color = '#64748b';
+      openrouterInfoEl.textContent = 'Đang kiểm tra Key và tải danh sách model Free...';
+    }
+
+    try {
+      // 1. Kiểm tra xác thực qua endpoint https://openrouter.ai/api/v1/auth/key
+      const authRes = await fetch('https://openrouter.ai/api/v1/auth/key', {
+        headers: { 'Authorization': `Bearer ${cleanKey}` }
+      });
+
+      if (!authRes.ok) {
+        let msg = '';
+        try {
+          const errJ = await authRes.json();
+          msg = errJ?.error?.message || (await authRes.text());
+        } catch (_) {
+          msg = `Mã HTTP ${authRes.status}`;
+        }
+        throw new Error(`Key không hợp lệ (${authRes.status}): ${msg}`);
+      }
+
+      const authData = await authRes.json();
+      
+      // 2. Lấy danh sách các model :free
+      const models = await Translator.getAvailableOpenRouterModels(cleanKey);
+
+      if (openrouterInfoEl) {
+        openrouterInfoEl.style.color = '#10b981';
+        const keyLabel = authData?.data?.label || 'Hợp lệ';
+        const freeCount = models ? models.length : 0;
+        openrouterInfoEl.innerHTML = `✓ Kết nối thành công! (Key: ${keyLabel})<br>Tìm thấy <strong>${freeCount}</strong> model Miễn phí (:free).`;
+      }
+
+      if (Array.isArray(models) && openrouterModelSelect) {
+        const currentVal = openrouterModelSelect.value;
+        openrouterModelSelect.innerHTML = '';
+        models.forEach(m => {
+          const opt = new Option(m.name || m.id, m.id);
+          openrouterModelSelect.add(opt);
+        });
+        if (currentVal && Array.from(openrouterModelSelect.options).some(o => o.value === currentVal)) {
+          openrouterModelSelect.value = currentVal;
+        } else {
+          openrouterModelSelect.value = 'openrouter/free';
+        }
+      }
+    } catch (err) {
+      if (openrouterInfoEl) {
+        openrouterInfoEl.style.color = '#ef4444';
+        openrouterInfoEl.textContent = `✕ ${err.message || 'Không thể kết nối đến OpenRouter'}`;
+      }
+    } finally {
+      if (btnTestOpenRouter) {
+        btnTestOpenRouter.disabled = false;
+        btnTestOpenRouter.textContent = 'Kiểm tra';
+      }
+    }
+  };
+
+  if (btnTestOpenRouter) {
+    btnTestOpenRouter.addEventListener('click', runTestOpenRouterKey);
+  }
+
   // Save settings
   document.getElementById('btn-save-settings').addEventListener('click', async () => {
-    const inputKey = document.getElementById('gemini-api-key').value.trim();
+    const rawGeminiKey = document.getElementById('gemini-api-key').value.trim();
+    const rawOpenRouterKey = document.getElementById('openrouter-api-key') ? document.getElementById('openrouter-api-key').value.trim() : '';
+    const selectedEngine = document.querySelector('input[name="engine"]:checked').value;
     
     const newSettings = {
-      engine: document.querySelector('input[name="engine"]:checked').value,
+      engine: selectedEngine,
       targetLang: document.getElementById('default-target-lang').value,
-      showFloatingIcon: document.getElementById('show-floating-icon').checked
+      showFloatingIcon: document.getElementById('show-floating-icon').checked,
+      ytEnabled: document.getElementById('yt-enabled').checked,
+      openrouterModel: openrouterModelSelect ? openrouterModelSelect.value : (settings.openrouterModel || 'openrouter/free')
     };
 
-    if (inputKey) {
-      newSettings.geminiApiKey = inputKey; // Ghi đè key mới nếu user có nhập
+    if (rawGeminiKey) {
+      newSettings.geminiApiKey = rawGeminiKey.replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim();
     } else {
-      newSettings.geminiApiKey = settings.geminiApiKey; // Giữ nguyên key cũ nếu ô trống
+      newSettings.geminiApiKey = settings.geminiApiKey;
+    }
+
+    if (rawOpenRouterKey) {
+      newSettings.openrouterApiKey = rawOpenRouterKey.replace(/^Bearer\s+/i, '').replace(/^["']|["']$/g, '').trim();
+    } else {
+      newSettings.openrouterApiKey = settings.openrouterApiKey;
     }
 
     await Storage.saveSettings(newSettings);
     
     // Cập nhật lại UI sau khi save
     settings.geminiApiKey = newSettings.geminiApiKey;
+    settings.openrouterApiKey = newSettings.openrouterApiKey;
+    settings.openrouterModel = newSettings.openrouterModel;
+    settings.engine = newSettings.engine;
+
     if (settings.geminiApiKey) {
       document.getElementById('gemini-api-key').value = '';
       document.getElementById('gemini-api-key').placeholder = 'Đã lưu Key. Nhập để thay đổi...';
+    }
+    if (settings.openrouterApiKey && document.getElementById('openrouter-api-key')) {
+      document.getElementById('openrouter-api-key').value = '';
+      document.getElementById('openrouter-api-key').placeholder = 'Đã lưu Key. Nhập để thay đổi...';
     }
 
     // update target in translation tab
@@ -89,6 +275,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const status = document.getElementById('settings-status');
     status.textContent = 'Đã lưu thành công!';
     setTimeout(() => status.textContent = '', 2000);
+
+    // Tự động kiểm tra kết nối nếu có key
+    if (selectedEngine === 'gemini' && settings.geminiApiKey) {
+      runTestKey();
+    } else if (selectedEngine === 'openrouter' && settings.openrouterApiKey) {
+      runTestOpenRouterKey();
+    }
   });
 
   // --- 4. Translate Logic ---
@@ -102,6 +295,24 @@ document.addEventListener('DOMContentLoaded', async () => {
     charCount.textContent = `${sourceText.value.length}/5000`;
   });
 
+  // Đảo chiều dịch (Anh ⇄ Việt)
+  const btnSwapLang = document.getElementById('btn-swap-lang');
+  if (btnSwapLang) {
+    btnSwapLang.addEventListener('click', () => {
+      const cur = targetSelect.value;
+      const next = (cur === 'vi' ? 'en' : 'vi');
+      targetSelect.value = next;
+
+      // Nếu đã có bản dịch sẵn, đảo kết quả vào ô nhập nguồn để dịch ngược lại
+      const curResult = targetTextContainer.innerText.trim();
+      if (curResult && curResult !== 'Bản dịch sẽ hiển thị ở đây...' && !curResult.startsWith('Lỗi:')) {
+        sourceText.value = curResult;
+        charCount.textContent = `${sourceText.value.length}/5000`;
+      }
+      doTranslate();
+    });
+  }
+
   // Hotkey Ctrl + Enter
   sourceText.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key === 'Enter') {
@@ -114,6 +325,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   async function doTranslate() {
     const text = sourceText.value.trim();
     if (!text) return;
+
+    // Tự động phát hiện thông minh: Nếu người dùng nhập tiếng Việt mà target đang là 'vi' -> tự đổi sang 'en' (Việt -> Anh)
+    const isVi = /[àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ]/i.test(text)
+      || /\b(là|và|của|các|trong|người|với|được|cho|không|có|những|để|khi|này|tại|từ|về|đã|sẽ)\b/i.test(text);
+
+    if (isVi && targetSelect.value === 'vi') {
+      targetSelect.value = 'en';
+    }
 
     targetTextContainer.innerHTML = '<div class="loader"></div>';
     
@@ -241,79 +460,10 @@ function escapeHtml(unsafe) {
       .replace(/\n/g, "<br>");
 }
 
+// TTS: gửi về service worker -> phát bằng Offscreen Document (giọng Google tự nhiên)
 function playHighQualityTTS(text, lang) {
-  if (window.currentPolyglotAudio) window.currentPolyglotAudio.pause();
-  if (window.speechSynthesis) window.speechSynthesis.cancel();
-
-  const chunks = text.match(/[^.!?\n]+[.!?\n]*/g) || [text];
-  let playIndex = 0;
-
-  const playNext = async () => {
-    if (playIndex >= chunks.length) return;
-    let chunk = chunks[playIndex].trim();
-    if (!chunk) {
-      playIndex++;
-      return playNext();
-    }
-
-    if (chunk.length > 200) chunk = chunk.substring(0, 200);
-
-    const url = `https://translate.googleapis.com/translate_tts?ie=UTF-8&client=gtx&tl=${lang}&q=${encodeURIComponent(chunk)}`;
-    
-    try {
-      const response = await new Promise(res => chrome.runtime.sendMessage({
-        action: "FETCH_TTS",
-        url: url
-      }, res));
-      
-      if (!response || !response.success) throw new Error('Fetch TTS failed');
-      
-      const audio = new Audio(response.dataUrl);
-      window.currentPolyglotAudio = audio;
-
-      audio.onended = () => {
-        playIndex++;
-        playNext();
-      };
-
-      audio.onerror = () => {
-        fallbackTTS(chunk, lang);
-        playIndex++;
-        setTimeout(playNext, 2000);
-      };
-
-      await audio.play();
-    } catch (e) {
-      fallbackTTS(chunk, lang);
-      playIndex++;
-      setTimeout(playNext, 2000);
-    }
-  };
-
-  playNext();
-}
-
-function fallbackTTS(text, lang) {
-  if (!window.speechSynthesis) return;
-  const utterance = new SpeechSynthesisUtterance(text);
-  
-  const voices = window.speechSynthesis.getVoices();
-  if (voices.length > 0) {
-    const voice = voices.find(v => v.lang.toLowerCase().startsWith(lang.toLowerCase()));
-    if (voice) {
-      utterance.voice = voice;
-    }
-  }
-
-  utterance.lang = lang;
-  utterance.rate = 1;
-  window.speechSynthesis.speak(utterance);
-}
-
-// Pre-load voices for fallback TTS
-if (window.speechSynthesis) {
-  window.speechSynthesis.getVoices();
-  window.speechSynthesis.onvoiceschanged = () => {
-    window.speechSynthesis.getVoices();
-  };
+  if (!text) return;
+  chrome.runtime.sendMessage({ action: "TTS_SPEAK", text, lang }, () => {
+    void chrome.runtime.lastError;
+  });
 }

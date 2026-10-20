@@ -541,6 +541,30 @@ input:checked + .slider:before {
   color: #10b981;
 }
 
+.secondary-btn {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-main);
+  padding: 0 12px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-weight: 500;
+  font-size: 12px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.secondary-btn:hover {
+  background: var(--bg-color);
+  border-color: var(--primary);
+  color: var(--primary);
+}
+
+.secondary-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 /* Loader */
 .loader {
   border: 2px solid rgba(79, 70, 229, 0.2);
