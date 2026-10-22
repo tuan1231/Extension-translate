@@ -1,0 +1,25 @@
+{
+  "name": "@polyglot/worker",
+  "version": "1.0.0",
+  "description": "Polyglot background media ingest and AI processing worker",
+  "main": "dist/cli.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/cli.js",
+    "dev": "tsx src/cli.ts",
+    "worker": "tsx src/cli.ts --poll"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.0",
+    "@supabase/supabase-js": "^2.49.1",
+    "commander": "^13.1.0",
+    "dotenv": "^16.4.7",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.19",
+    "tsx": "^4.19.3",
+    "typescript": "^5.6.3"
+  }
+}

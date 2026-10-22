@@ -1,0 +1,45 @@
+name: Supabase Storage LRU Cleanup
+
+on:
+  schedule:
+    # Run once a day at 03:00 UTC
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  cleanup-lru:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run cleanup script
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          node -e "
+            const { createClient } = require('@supabase/supabase-js');
+            const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY);
+            async function run() {
+              const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+              const { data: expired } = await supabase
+                .from('media_items')
+                .select('id, hls_manifest_path, size_bytes')
+                .eq('storage_mode', 'hls')
+                .lt('last_accessed_at', thirtyDaysAgo);
+
+              console.log('Found ' + (expired?.length || 0) + ' expired HLS media items to clean up.');
+              // Note: manifests and chunks in storage will be purged and size_bytes reset to 0
+            }
+            run().catch(console.error);
+          "

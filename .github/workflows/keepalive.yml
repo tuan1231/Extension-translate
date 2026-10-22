@@ -1,0 +1,26 @@
+name: Supabase Keepalive Ping
+
+on:
+  schedule:
+    # Run every 3 days at 06:00 UTC
+    - cron: '0 6 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping-supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "Secrets not configured, skipping."
+            exit 0
+          fi
+          echo "Pinging $SUPABASE_URL/rest/v1/invites?select=email&limit=1"
+          curl -s -f -H "apikey: $SUPABASE_ANON_KEY" \
+               -H "Authorization: Bearer $SUPABASE_ANON_KEY" \
+               "$SUPABASE_URL/rest/v1/invites?select=email&limit=1" > /dev/null
+          echo "Keepalive ping successful! Supabase project will remain active."

@@ -1,0 +1,59 @@
+name: Polyglot Media Ingest Worker
+
+on:
+  workflow_dispatch:
+    inputs:
+      job_id:
+        description: 'UUID of the job in Supabase to process'
+        required: true
+        type: string
+
+jobs:
+  process-job:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Cache yt-dlp binary
+        id: cache-ytdlp
+        uses: actions/cache@v4
+        with:
+          path: /usr/local/bin/yt-dlp
+          key: ytdlp-${{ runner.os }}-v1
+
+      - name: Install yt-dlp if not cached
+        if: steps.cache-ytdlp.outputs.cache-hit != 'true'
+        run: |
+          sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+          sudo chmod a+rx /usr/local/bin/yt-dlp
+
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Build shared package
+        run: npm run build:shared
+
+      - name: Execute worker job
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          GHA_RUN_ID: ${{ github.run_id }}
+        run: |
+          cd worker
+          npx tsx src/cli.ts --job "${{ github.event.inputs.job_id }}"
